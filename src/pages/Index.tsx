@@ -4,15 +4,6 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import GitHubHeatmap from "@/components/Landing/GitHubHeatmap";
 
-const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
-  show: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { delay: i * 0.1, duration: 0.5, ease: "easeOut" as const },
-  }),
-};
-
 const features = [
   {
     icon: BarChart3,
@@ -41,28 +32,27 @@ const Index = () => {
     <div className="min-h-screen">
       {/* Hero */}
       <section className="relative min-h-screen flex items-center justify-center overflow-hidden gradient-bg-hero">
-        {/* Floating orbs */}
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-64 h-64 rounded-full bg-primary/5 blur-3xl animate-float" />
-          <div className="absolute bottom-1/3 right-1/4 w-96 h-96 rounded-full bg-primary/3 blur-3xl animate-float" style={{ animationDelay: "2s" }} />
+          <div className="absolute top-1/4 left-1/4 w-72 h-72 rounded-full bg-primary/[0.04] blur-[100px]" />
+          <div className="absolute bottom-1/3 right-1/4 w-96 h-96 rounded-full bg-primary/[0.03] blur-[120px]" />
         </div>
 
         <div className="container mx-auto px-4 pt-24 pb-16 relative z-10">
           <div className="max-w-4xl mx-auto text-center">
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-border/50 bg-muted/50 text-sm text-muted-foreground mb-8"
+              transition={{ duration: 0.4 }}
+              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-border bg-secondary text-sm text-muted-foreground mb-8"
             >
               <Zap className="w-3.5 h-3.5 text-primary" />
               AI-Powered Developer Intelligence
             </motion.div>
 
             <motion.h1
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1, duration: 0.6 }}
+              transition={{ delay: 0.08, duration: 0.5 }}
               className="text-5xl sm:text-6xl md:text-7xl font-black tracking-tight leading-[1.05] mb-6"
             >
               Get Hired by{" "}
@@ -70,9 +60,9 @@ const Index = () => {
             </motion.h1>
 
             <motion.p
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2, duration: 0.5 }}
+              transition={{ delay: 0.15, duration: 0.5 }}
               className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10"
             >
               OpenSourceHire evaluates developers through GitHub contributions, 
@@ -80,10 +70,10 @@ const Index = () => {
             </motion.p>
 
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3, duration: 0.5 }}
-              className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
+              transition={{ delay: 0.22, duration: 0.5 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-20"
             >
               <Button size="lg" className="rounded-xl gap-2 text-base px-8 h-12 orange-glow" asChild>
                 <Link to="/dashboard">
@@ -101,9 +91,9 @@ const Index = () => {
 
             {/* Heatmap preview */}
             <motion.div
-              initial={{ opacity: 0, y: 30 }}
+              initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5, duration: 0.7 }}
+              transition={{ delay: 0.35, duration: 0.6 }}
               className="glass-card-glow p-6 md:p-8 max-w-3xl mx-auto"
             >
               <div className="flex items-center justify-between mb-4">
@@ -112,13 +102,13 @@ const Index = () => {
                 </span>
                 <span className="text-xs font-mono text-primary">1,247 contributions</span>
               </div>
-              <div className="overflow-x-auto">
-                <GitHubHeatmap interactive />
+              <div className="overflow-x-auto pb-2">
+                <GitHubHeatmap />
               </div>
-              <div className="flex items-center gap-2 mt-4 justify-end">
+              <div className="flex items-center gap-2 mt-3 justify-end">
                 <span className="text-xs text-muted-foreground">Less</span>
                 {[0, 1, 2, 3, 4].map((l) => (
-                  <div key={l} className={`w-[11px] h-[11px] rounded-sm heatmap-${l}`} />
+                  <div key={l} className={`w-[11px] h-[11px] rounded-[2px] heatmap-${l}`} />
                 ))}
                 <span className="text-xs text-muted-foreground">More</span>
               </div>
@@ -139,18 +129,17 @@ const Index = () => {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5 max-w-6xl mx-auto">
             {features.map((f, i) => (
               <motion.div
                 key={f.title}
-                custom={i}
-                initial="hidden"
-                whileInView="show"
-                viewport={{ once: true, margin: "-50px" }}
-                variants={fadeUp}
-                className="clay-card p-6 group hover:border-primary/20 transition-colors"
+                initial={{ opacity: 0, y: 12 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-40px" }}
+                transition={{ delay: i * 0.08, duration: 0.4 }}
+                className="clay-card p-6"
               >
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
                   <f.icon className="w-5 h-5 text-primary" />
                 </div>
                 <h3 className="font-semibold mb-2">{f.title}</h3>
@@ -162,7 +151,7 @@ const Index = () => {
       </section>
 
       {/* How it works */}
-      <section className="py-24 md:py-32 border-t border-border/50">
+      <section className="py-24 md:py-32 border-t border-border">
         <div className="container mx-auto px-4">
           <div className="text-center mb-16">
             <h2 className="section-heading mb-4">How It Works</h2>
@@ -177,14 +166,13 @@ const Index = () => {
             ].map((s, i) => (
               <motion.div
                 key={s.step}
-                custom={i}
-                initial="hidden"
-                whileInView="show"
+                initial={{ opacity: 0, y: 12 }}
+                whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                variants={fadeUp}
+                transition={{ delay: i * 0.1, duration: 0.4 }}
                 className="text-center"
               >
-                <div className="text-5xl font-black text-primary/20 font-mono mb-3">{s.step}</div>
+                <div className="text-5xl font-black text-primary/15 font-mono mb-3">{s.step}</div>
                 <h3 className="font-semibold text-lg mb-2">{s.title}</h3>
                 <p className="text-sm text-muted-foreground">{s.desc}</p>
               </motion.div>
@@ -194,14 +182,9 @@ const Index = () => {
       </section>
 
       {/* CTA */}
-      <section className="py-24 md:py-32 border-t border-border/50">
+      <section className="py-24 md:py-32 border-t border-border">
         <div className="container mx-auto px-4 text-center">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            className="glass-card-glow max-w-2xl mx-auto p-12"
-          >
+          <div className="glass-card-glow max-w-2xl mx-auto p-12">
             <h2 className="text-3xl font-bold mb-4">
               Ready to let your <span className="text-gradient-orange">code</span> do the talking?
             </h2>
@@ -214,12 +197,12 @@ const Index = () => {
                 Start Your Analysis
               </Link>
             </Button>
-          </motion.div>
+          </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-border/50 py-8">
+      <footer className="border-t border-border py-8">
         <div className="container mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
           <span>© 2026 OpenSourceHire. Built for builders.</span>
           <div className="flex items-center gap-6">

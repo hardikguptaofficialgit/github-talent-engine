@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { motion } from "framer-motion";
 
 const GitHubHeatmap = ({ interactive = false }: { interactive?: boolean }) => {
   const weeks = 52;
@@ -19,17 +18,14 @@ const GitHubHeatmap = ({ interactive = false }: { interactive?: boolean }) => {
   }, []);
 
   return (
-    <div className="flex gap-[3px] overflow-hidden">
+    <div className="flex gap-[3px]">
       {data.map((week, wi) => (
         <div key={wi} className="flex flex-col gap-[3px]">
           {week.map((level, di) => (
-            <motion.div
+            <div
               key={di}
-              initial={{ opacity: 0, scale: 0 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: (wi * 7 + di) * 0.001, duration: 0.3 }}
-              className={`w-[11px] h-[11px] heatmap-cell heatmap-${level} ${
-                interactive ? "hover:scale-150 cursor-pointer" : ""
+              className={`w-[10px] h-[10px] heatmap-cell heatmap-${level} ${
+                interactive ? "cursor-crosshair" : ""
               }`}
             />
           ))}
