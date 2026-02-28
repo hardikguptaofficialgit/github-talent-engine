@@ -137,12 +137,14 @@ const Navbar = () => {
             </div>
           ) : (
             <>
-              <button
-                onClick={handleDemoLogin}
-                className="hidden sm:inline-flex h-9 rounded-xl border border-white/15 bg-white/5 px-4 text-xs font-semibold text-white hover:bg-white/10 transition"
-              >
-                Try Demo
-              </button>
+             <div className="flex justify-center">
+  <button
+    onClick={handleDemoLogin}
+    className="h-9 rounded-xl border border-white/15 bg-white/5 px-4 text-xs font-semibold text-white hover:bg-white/10 transition"
+  >
+    Try Demo
+  </button>
+</div>
               <button
                 onClick={handleLogin}
                 className="hidden sm:flex h-9 rounded-xl bg-[#ff7a00] px-4 text-xs font-semibold text-black items-center gap-2 hover:opacity-90 transition"
