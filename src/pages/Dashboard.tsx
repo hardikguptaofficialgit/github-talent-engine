@@ -146,15 +146,44 @@ const Dashboard = () => {
       });
   }, [user, hasInsights, queryClient, isLoading]);
 
-  const monthLabels = (() => {
-    const totalWeeks = Math.max(data?.heatmapWeeks?.length ?? 0, 52);
-    const now = new Date();
-    const labels: { label: string; week: number }[] = [];
+  // Heatmap geometry constants — must match the JSX cell size + gap
+  const CELL_PX = 11;  // h-[11px] w-[11px]
+  const GAP_PX = 4;   // gap-[4px]
+  const CELL_STEP = CELL_PX + GAP_PX; // 15px per column
 
-    for (let week = 0; week < totalWeeks; week += 4) {
-      const dt = new Date(now);
-      dt.setDate(now.getDate() - (totalWeeks - 1 - week) * 7);
-      labels.push({ label: dt.toLocaleString("en-US", { month: "short" }), week });
+  const monthLabels = (() => {
+    const weeks = data?.heatmapWeeks ?? [];
+    const totalWeeks = Math.max(weeks.length, 52);
+
+    // Walk week by week. For week 0 try to infer the start date from the
+    // contribution data (the first day of the first week).  Fall back to
+    // computing it backwards from today so the label row is always filled.
+    const now = new Date();
+    // Date of Monday of week-0 (oldest week shown)
+    const startDate = new Date(now);
+    startDate.setDate(now.getDate() - (totalWeeks - 1) * 7);
+    // Align to Sunday (GitHub heatmap weeks start on Sunday)
+    startDate.setDate(startDate.getDate() - startDate.getDay());
+
+    const labels: { label: string; week: number; left: number }[] = [];
+    let lastMonth = -1;
+
+    for (let wi = 0; wi < totalWeeks; wi++) {
+      const weekStart = new Date(startDate);
+      weekStart.setDate(startDate.getDate() + wi * 7);
+      const month = weekStart.getMonth();
+
+      if (month !== lastMonth) {
+        lastMonth = month;
+        // Skip the very first column so the label doesn't clip the left border
+        if (wi > 0) {
+          labels.push({
+            label: weekStart.toLocaleString("en-US", { month: "short" }),
+            week: wi,
+            left: wi * CELL_STEP,
+          });
+        }
+      }
     }
 
     return labels;
@@ -373,32 +402,45 @@ const Dashboard = () => {
                 </div>
               </div>
               <div className="mt-4 overflow-x-auto pb-2">
-                <div className="relative w-max min-w-full rounded-xl border border-white/10 bg-[#0a1324] p-3">
-                  <div className="mb-2 flex text-[10px] text-white/45">
+                <div className="rounded-xl border border-white/10 bg-[#0a1324] p-3 w-max">
+
+                  {/* Month label row — absolutely positioned over the column grid */}
+                  <div className="relative h-4 mb-1" style={{ width: Math.max((data?.heatmapWeeks?.length ?? 52), 52) * CELL_STEP - GAP_PX }}>
                     {monthLabels.map((m) => (
-                      <span key={`${m.label}-${m.week}`} className="w-[34px]">{m.label}</span>
+                      <span
+                        key={`${m.label}-${m.week}`}
+                        className="absolute text-[10px] text-white/45 leading-none"
+                        style={{ left: m.left }}
+                      >
+                        {m.label}
+                      </span>
                     ))}
                   </div>
+
+                  {/* Week columns */}
                   <div className="flex gap-[4px]">
-                    {(data?.heatmapWeeks ?? []).map((week, wi) => (
+                    {(data?.heatmapWeeks?.length
+                      ? data.heatmapWeeks
+                      : Array.from({ length: 52 }, () => Array.from({ length: 7 }, () => 0))
+                    ).map((week, wi) => (
                       <div key={wi} className="flex flex-col gap-[4px]">
-                        {week.map((level, di) => (
-                          <span key={di} className={`h-[11px] w-[11px] rounded-[2px] heatmap-${level} outline outline-1 outline-white/5`} />
+                        {(week.length === 7 ? week : Array.from({ length: 7 }, (_, i) => week[i] ?? 0)).map((level, di) => (
+                          <span
+                            key={di}
+                            className={[
+                              "h-[11px] w-[11px] rounded-[2px] outline outline-1 outline-white/5",
+                              data?.heatmapWeeks?.length
+                                ? `heatmap-${level}`
+                                : isLoading
+                                  ? "bg-white/5 animate-pulse"
+                                  : "heatmap-0",
+                            ].join(" ")}
+                          />
                         ))}
                       </div>
                     ))}
-                    {!(data?.heatmapWeeks?.length) &&
-                      Array.from({ length: 52 }).map((_, wi) => (
-                        <div key={wi} className="flex flex-col gap-[4px]">
-                          {Array.from({ length: 7 }).map((_, di) => (
-                            <span
-                              key={di}
-                              className={`h-[11px] w-[11px] rounded-[2px] outline outline-1 outline-white/5 ${isLoading ? "bg-white/5 animate-pulse" : "heatmap-0"}`}
-                            />
-                          ))}
-                        </div>
-                      ))}
                   </div>
+
                 </div>
               </div>
             </section>
@@ -572,8 +614,8 @@ const Dashboard = () => {
                           key={repo.name}
                           onClick={() => setSelectedRepo(repo.name)}
                           className={`w-full rounded-xl border px-3 py-2 text-left transition ${active
-                              ? "border-[#ff7a00] bg-[#1a0f07]"
-                              : "border-[#2a2a2a] bg-[#141418] hover:border-[#ff7a00]/60"
+                            ? "border-[#ff7a00] bg-[#1a0f07]"
+                            : "border-[#2a2a2a] bg-[#141418] hover:border-[#ff7a00]/60"
                             }`}
                         >
                           <p className="truncate text-sm font-semibold text-white">
