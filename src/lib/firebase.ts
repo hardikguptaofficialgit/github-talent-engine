@@ -9,7 +9,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { Firestore, getFirestore } from "firebase/firestore";
+import { Firestore, doc, getFirestore, serverTimestamp, setDoc } from "firebase/firestore";
 import { syncGithubInsights } from "@/lib/github-sync";
 
 const GITHUB_TOKEN_KEY = "opensourcehire.github.token";
@@ -81,6 +81,7 @@ const loginWithGithub = async (): Promise<User | null> => {
         fallbackEmail: result.user.email,
       });
     } catch (error) {
+      await syncGithubProfileFallback({ user: result.user, accessToken });
       console.error("GitHub insights sync failed:", error);
     }
   }
@@ -128,13 +129,19 @@ const refreshGithubInsights = async (): Promise<{
   }
 
   storeGithubToken(accessToken);
-  const sync = await syncGithubInsights({
-    firestore: db,
-    uid: result.user.uid,
-    accessToken,
-    fallbackName: result.user.displayName,
-    fallbackEmail: result.user.email,
-  });
+  let sync: { repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles: number };
+  try {
+    sync = await syncGithubInsights({
+      firestore: db,
+      uid: result.user.uid,
+      accessToken,
+      fallbackName: result.user.displayName,
+      fallbackEmail: result.user.email,
+    });
+  } catch {
+    const fallback = await syncGithubProfileFallback({ user: result.user, accessToken });
+    sync = { repoCount: fallback.repoCount, privateRepoCount: 0, publicRepoCount: fallback.repoCount, reposWithFiles: 0 };
+  }
 
   return { user: result.user, ...sync };
 };
@@ -151,7 +158,7 @@ const syncGithubProfileFallback = async ({
 }: {
   user: User;
   accessToken: string;
-}): Promise<{ login: string | null }> => {
+}): Promise<{ login: string | null; repoCount: number }> => {
   if (!db) return { login: null };
 
   try {
@@ -287,9 +294,9 @@ const syncGithubProfileFallback = async ({
       ),
     ]);
 
-    return { login };
+    return { login, repoCount: repos.length };
   } catch {
-    return { login: null };
+    return { login: null, repoCount: 0 };
   }
 };
 
