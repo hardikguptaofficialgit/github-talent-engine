@@ -1,16 +1,17 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Navbar from "@/components/Layout/Navbar";
 import { getDashboardData, getJobsData, getRecommendedJobsForUser } from "@/lib/app-data";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "@/hooks/use-toast";
-import { refreshGithubInsights } from "@/lib/firebase";
+import { getStoredGithubToken, refreshGithubInsights, syncGithubInsightsWithToken, clearStoredGithubToken } from "@/lib/firebase";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const Dashboard = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedRepo, setSelectedRepo] = useState<string>("");
+  const autoSyncRef = useRef(false);
 
   const { data, refetch } = useQuery({
     queryKey: ["dashboard-data", user?.uid],
@@ -115,6 +116,31 @@ const Dashboard = () => {
     (data?.languages?.length ?? 0) > 0 ||
     (data?.contributionStrength ?? 0) > 0;
 
+  useEffect(() => {
+    if (!user || autoSyncRef.current || hasInsights) return;
+    const token = getStoredGithubToken();
+    if (!token) return;
+
+    autoSyncRef.current = true;
+    syncGithubInsightsWithToken({ user, accessToken: token })
+      .then((sync) => {
+        if (user?.uid) {
+          queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
+        }
+        toast({
+          title: "GitHub insights synced",
+          description: `${sync.repoCount} repositories analyzed.`,
+        });
+      })
+      .catch(() => {
+        clearStoredGithubToken();
+        toast({
+          title: "GitHub sync failed",
+          description: "Please re-authorize GitHub access to sync insights.",
+        });
+      });
+  }, [user, hasInsights, queryClient]);
+
   const monthLabels = (() => {
     const totalWeeks = Math.max(data?.heatmapWeeks?.length ?? 0, 52);
     const now = new Date();
@@ -131,7 +157,8 @@ const Dashboard = () => {
 
   const handleResync = async () => {
     try {
-      const sync = await refreshGithubInsights();
+      const token = user ? getStoredGithubToken() : null;
+      const sync = token && user ? await syncGithubInsightsWithToken({ user, accessToken: token }) : await refreshGithubInsights();
       if (user?.uid) {
         await queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
       }
