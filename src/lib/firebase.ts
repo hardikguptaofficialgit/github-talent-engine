@@ -183,6 +183,59 @@ const syncGithubProfileFallback = async ({
       payload.bio ||
       `GitHub activity synced. Full insights pending; refresh to load repositories.`;
 
+    let repos: Array<{
+      full_name?: string;
+      html_url?: string;
+      private?: boolean;
+      language?: string | null;
+      stargazers_count?: number;
+      pushed_at?: string;
+      default_branch?: string;
+    }> = [];
+
+    if (login) {
+      const repoResponse = await fetch(
+        `https://api.github.com/users/${encodeURIComponent(login)}/repos?sort=updated&per_page=12`,
+        {
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${accessToken}`,
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+        }
+      );
+      if (repoResponse.ok) {
+        const repoPayload = (await repoResponse.json()) as unknown;
+        if (Array.isArray(repoPayload)) {
+          repos = repoPayload.filter((repo) => !!repo && typeof repo === "object");
+        }
+      }
+    }
+
+    const reposGlimpse = repos.map((repo) => ({
+      name: repo.full_name ?? "unknown/repo",
+      url: repo.html_url ?? "",
+      isPrivate: !!repo.private,
+      language: repo.language ?? "Unknown",
+      stars: typeof repo.stargazers_count === "number" ? repo.stargazers_count : 0,
+      updatedAt: repo.pushed_at ?? "",
+      files: [],
+    }));
+
+    const languageCounts = new Map<string, number>();
+    repos.forEach((repo) => {
+      const lang = repo.language;
+      if (!lang) return;
+      languageCounts.set(lang, (languageCounts.get(lang) ?? 0) + 1);
+    });
+    const totalLangs = Array.from(languageCounts.values()).reduce((acc, value) => acc + value, 0);
+    const languages = totalLangs
+      ? Array.from(languageCounts.entries())
+          .map(([name, count]) => ({ name, value: Math.round((count / totalLangs) * 100) }))
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 5)
+      : [];
+
     await Promise.all([
       setDoc(
         doc(db, "users", user.uid, "github", "main"),
@@ -206,6 +259,29 @@ const syncGithubProfileFallback = async ({
             ...(payload.html_url ? [{ label: "GitHub", url: payload.html_url }] : []),
             ...(payload.blog ? [{ label: "Portfolio", url: payload.blog }] : []),
           ],
+        },
+        { merge: true }
+      ),
+      setDoc(
+        doc(db, "users", user.uid, "dashboard", "main"),
+        {
+          heading: `Welcome back, ${profileName}`,
+          subheading: repos.length
+            ? `Loaded ${repos.length} recent public repositories from GitHub.`
+            : "Basic GitHub profile loaded. Refresh to sync full insights.",
+          contributionStrength: Math.min(90, Math.max(20, repos.length * 6)),
+          consistencyScore: 0,
+          consistencyBars: [],
+          heatmapWeeks: [],
+          collaboration: { prsMerged: 0, codeReviews: 0, issuesClosed: 0 },
+          languages,
+          summary: "Fallback summary based on public repository data.",
+          repoIntelligence: [],
+          repos: reposGlimpse,
+          contributionStreak: 0,
+          openSourceImpact: repos.length
+            ? [`${repos.length} public repositories discovered from GitHub.`]
+            : ["No public repositories found yet."],
         },
         { merge: true }
       ),

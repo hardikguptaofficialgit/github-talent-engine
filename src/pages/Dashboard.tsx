@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { toast } from "@/hooks/use-toast";
 import {
   getStoredGithubToken,
+  refreshGithubInsights,
   syncGithubInsightsWithToken,
   syncGithubProfileFallback,
   clearStoredGithubToken,
@@ -137,12 +138,15 @@ const Dashboard = () => {
           description: `${sync.repoCount} repositories analyzed.`,
         });
       })
-      .catch(async () => {
+      .catch(async (error) => {
         await syncGithubProfileFallback({ user, accessToken: token });
         if (user?.uid) {
           queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
         }
-        clearStoredGithubToken();
+        const message = error instanceof Error ? error.message : "";
+        if (message.includes("401") || message.includes("403")) {
+          clearStoredGithubToken();
+        }
         toast({
           title: "GitHub sync failed",
           description: "Loaded basic profile data. Re-authorize GitHub to sync full insights.",
@@ -167,14 +171,9 @@ const Dashboard = () => {
   const handleResync = async () => {
     try {
       const token = user ? getStoredGithubToken() : null;
-      if (!token || !user) {
-        toast({
-          title: "Re-auth required",
-          description: "Please sign in with GitHub again to refresh insights.",
-        });
-        return;
-      }
-      const sync = await syncGithubInsightsWithToken({ user, accessToken: token });
+      const sync = token && user
+        ? await syncGithubInsightsWithToken({ user, accessToken: token })
+        : await refreshGithubInsights();
       if (user?.uid) {
         await queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
       }
