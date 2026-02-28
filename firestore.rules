@@ -10,14 +10,7 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isValidProfileWrite() {
-      return request.resource.data.name is string
-        && request.resource.data.headline is string
-        && request.resource.data.bio is string
-        && request.resource.data.links is list
-        && request.resource.data.links.size() <= 6;
-    }
-
+    // Public collections — read-only for everyone
     match /public/{documentId} {
       allow read: if true;
       allow write: if false;
@@ -28,16 +21,33 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // User profile — owner can read/write freely (sync writes partial fields via merge)
     match /users/{userId}/profile/{docId} {
       allow read: if isOwner(userId);
-      allow create, update: if isOwner(userId) && isValidProfileWrite();
-      allow delete: if false;
+      allow create, update, delete: if isOwner(userId);
     }
 
+    // User dashboard — owner full access
+    match /users/{userId}/dashboard/{docId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // User github metadata — owner full access
+    match /users/{userId}/github/{docId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // User applications — owner full access
+    match /users/{userId}/applications/{docId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Any other user sub-collections — owner full access
     match /users/{userId}/{document=**} {
       allow read, write: if isOwner(userId);
     }
 
+    // Deny everything else
     match /{document=**} {
       allow read, write: if false;
     }

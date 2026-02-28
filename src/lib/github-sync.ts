@@ -1,5 +1,10 @@
 import { Firestore, doc, serverTimestamp, setDoc } from "firebase/firestore";
 
+// ---------------------------------------------------------------------------
+// Fallback token from environment — used when the user's OAuth token fails
+// ---------------------------------------------------------------------------
+const ENV_GITHUB_TOKEN: string = import.meta.env.VITE_GITHUB_TOKEN ?? "";
+
 type GitHubUser = {
   login: string;
   name: string | null;
@@ -74,51 +79,102 @@ type ContributionCalendarResponse = {
   };
 };
 
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch from GitHub REST API. If the provided token fails (401/403), retries
+ * automatically with the env fallback token (VITE_GITHUB_TOKEN).
+ */
 const githubFetch = async <T>(endpoint: string, token: string): Promise<T> => {
   const url = `https://api.github.com${endpoint}`;
-  console.log(`[github-sync] GET ${url}`);
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
+  const attempt = async (t: string): Promise<Response> => {
+    return fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${t}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+  };
+
+  let response = await attempt(token);
+
+  // If the user token is expired/revoked → retry with env fallback token
+  if (!response.ok && (response.status === 401 || response.status === 403) && ENV_GITHUB_TOKEN && ENV_GITHUB_TOKEN !== token) {
+    console.warn(`[github-sync] Token failed (${response.status}) for ${endpoint} — retrying with env fallback token`);
+    response = await attempt(ENV_GITHUB_TOKEN);
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    console.error(`[github-sync] Request failed ${response.status} for ${endpoint}:`, body);
+    console.error(`[github-sync] ❌ ${response.status} ${endpoint}:`, body.slice(0, 200));
     throw new Error(`GitHub API ${response.status}: ${endpoint}`);
   }
 
   const data = (await response.json()) as T;
-  console.log(`[github-sync] OK ${endpoint}`);
+  console.log(`[github-sync] ✓ ${endpoint}`);
   return data;
 };
 
+/**
+ * GraphQL helper — same auto-retry logic with env fallback.
+ */
 const githubGraphqlFetch = async <T>(query: string, token: string): Promise<T> => {
-  console.log("[github-sync] GraphQL: contributionCalendar query");
-  const response = await fetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    body: JSON.stringify({ query }),
-  });
+  const attempt = async (t: string): Promise<Response> => {
+    return fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${t}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({ query }),
+    });
+  };
+
+  let response = await attempt(token);
+
+  if (!response.ok && (response.status === 401 || response.status === 403) && ENV_GITHUB_TOKEN && ENV_GITHUB_TOKEN !== token) {
+    console.warn(`[github-sync] GraphQL token failed (${response.status}) — retrying with env fallback token`);
+    response = await attempt(ENV_GITHUB_TOKEN);
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    console.error(`[github-sync] GraphQL failed ${response.status}:`, body);
+    console.error(`[github-sync] ❌ GraphQL ${response.status}:`, body.slice(0, 200));
     throw new Error(`GitHub GraphQL ${response.status}`);
   }
 
   const data = (await response.json()) as T;
-  console.log("[github-sync] GraphQL OK");
+  console.log(`[github-sync] ✓ GraphQL contributionCalendar`);
   return data;
 };
+
+// ---------------------------------------------------------------------------
+// GitHub search with safe fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns total_count for a GitHub search query.
+ * Never throws — returns 0 on any failure.
+ */
+const safeSearchCount = async (query: string, token: string): Promise<number> => {
+  try {
+    const encoded = encodeURIComponent(query);
+    const result = await githubFetch<SearchResult>(`/search/issues?q=${encoded}&per_page=1`, token);
+    return result.total_count ?? 0;
+  } catch (err) {
+    console.warn(`[github-sync] ⚠️ Search skipped for "${query}":`, err instanceof Error ? err.message : err);
+    return 0;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Metric builders
+// ---------------------------------------------------------------------------
 
 const normalizeBars = (counts: number[]): number[] => {
   const max = Math.max(...counts, 1);
@@ -133,19 +189,17 @@ const buildMonthlyBars = (repos: GitHubRepo[]): number[] => {
   });
 
   const counts = new Map<string, number>(keys.map((key) => [key, 0]));
-
   repos.forEach((repo) => {
     const pushed = new Date(repo.pushed_at);
     if (Number.isNaN(pushed.getTime())) return;
     const key = `${pushed.getFullYear()}-${String(pushed.getMonth() + 1).padStart(2, "0")}`;
-    if (!counts.has(key)) return;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
   });
 
   return normalizeBars(keys.map((key) => counts.get(key) ?? 0));
 };
 
-const toHeatmapLevel = (count: number, max: number) => {
+const toHeatmapLevel = (count: number, max: number): number => {
   if (count <= 0) return 0;
   const ratio = count / Math.max(max, 1);
   if (ratio < 0.25) return 1;
@@ -156,63 +210,52 @@ const toHeatmapLevel = (count: number, max: number) => {
 
 const buildHeatmapWeeks = (weeks: ContributionCalendarWeek[] | undefined): number[][] => {
   if (!weeks?.length) return [];
-  const allCounts = weeks.flatMap((week) => week.contributionDays.map((day) => day.contributionCount));
+  const allCounts = weeks.flatMap((w) => w.contributionDays.map((d) => d.contributionCount));
   const max = Math.max(...allCounts, 1);
-  return weeks.map((week) =>
-    week.contributionDays.map((day) => toHeatmapLevel(day.contributionCount, max))
-  );
+  return weeks.map((w) => w.contributionDays.map((d) => toHeatmapLevel(d.contributionCount, max)));
 };
 
 const buildLanguageDistribution = (repos: GitHubRepo[]) => {
   const totals = new Map<string, number>();
-
   repos.forEach((repo) => {
     if (!repo.language) return;
-    const next = (totals.get(repo.language) ?? 0) + Math.max(1, repo.size);
-    totals.set(repo.language, next);
+    totals.set(repo.language, (totals.get(repo.language) ?? 0) + Math.max(1, repo.size));
   });
-
-  const sum = Array.from(totals.values()).reduce((acc, value) => acc + value, 0);
+  const sum = Array.from(totals.values()).reduce((a, b) => a + b, 0);
   if (!sum) return [];
-
   return Array.from(totals.entries())
     .map(([name, value]) => ({ name, value: Math.round((value / sum) * 100) }))
     .sort((a, b) => b.value - a.value)
-    .slice(0, 5);
+    .slice(0, 6);
 };
 
 const buildStreak = (repos: GitHubRepo[]): number => {
   const days = new Set<string>();
-
   repos.forEach((repo) => {
     const pushed = new Date(repo.pushed_at);
-    if (Number.isNaN(pushed.getTime())) return;
-    days.add(pushed.toISOString().slice(0, 10));
+    if (!Number.isNaN(pushed.getTime())) days.add(pushed.toISOString().slice(0, 10));
   });
-
   if (!days.size) return 0;
 
   const sorted = Array.from(days)
-    .map((value) => new Date(value))
+    .map((d) => new Date(d))
     .sort((a, b) => a.getTime() - b.getTime());
 
   let longest = 1;
   let current = 1;
-
-  for (let i = 1; i < sorted.length; i += 1) {
-    const diffDays = Math.round((sorted[i].getTime() - sorted[i - 1].getTime()) / 86400000);
-    if (diffDays === 1) {
-      current += 1;
-      longest = Math.max(longest, current);
-    } else {
-      current = 1;
-    }
+  for (let i = 1; i < sorted.length; i++) {
+    const diff = Math.round((sorted[i].getTime() - sorted[i - 1].getTime()) / 86400000);
+    current = diff === 1 ? current + 1 : 1;
+    longest = Math.max(longest, current);
   }
-
   return longest;
 };
 
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+// ---------------------------------------------------------------------------
+// Repo file tree fetching
+// ---------------------------------------------------------------------------
 
 const getRepoFiles = async (repo: GitHubRepo, accessToken: string): Promise<string[]> => {
   try {
@@ -227,82 +270,74 @@ const getRepoFiles = async (repo: GitHubRepo, accessToken: string): Promise<stri
         `/repos/${repo.full_name}/git/trees/${treeSha}?recursive=1`,
         accessToken
       );
-
       const files = (tree.tree ?? [])
-        .filter((entry) => entry.type === "blob" && typeof entry.path === "string")
-        .map((entry) => entry.path as string)
+        .filter((e) => e.type === "blob" && typeof e.path === "string")
+        .map((e) => e.path as string)
         .slice(0, 80);
-
       if (files.length) return files;
     }
 
-    const tree = await githubFetch<RepoContentItem[]>(
+    // Shallow fallback
+    const contents = await githubFetch<RepoContentItem[]>(
       `/repos/${repo.full_name}/contents?ref=${repo.default_branch}`,
       accessToken
     );
-
-    return (Array.isArray(tree) ? tree : [])
-      .filter((entry) => entry.type === "file" || entry.type === "dir")
-      .map((entry) => entry.name)
+    return (Array.isArray(contents) ? contents : [])
+      .filter((e) => e.type === "file" || e.type === "dir")
+      .map((e) => e.name)
       .slice(0, 20);
   } catch (err) {
-    console.warn(`[github-sync] Failed to fetch files for ${repo.full_name}:`, err);
+    console.warn(`[github-sync] ⚠️ File tree skipped for ${repo.full_name}:`, err instanceof Error ? err.message : err);
     return [];
   }
 };
+
+// ---------------------------------------------------------------------------
+// Repo listing — tries authenticated endpoint first, falls back to public
+// ---------------------------------------------------------------------------
 
 const fetchUserRepos = async (login: string, accessToken: string): Promise<GitHubRepo[]> => {
   const repos: GitHubRepo[] = [];
   const seen = new Set<string>();
 
-  const loadPages = async (pathFactory: (page: number) => string) => {
-    for (let page = 1; page <= 10; page += 1) {
-      const batch = await githubFetch<GitHubRepo[]>(pathFactory(page), accessToken);
+  const loadPages = async (pathFactory: (page: number) => string, tokenOverride?: string) => {
+    for (let page = 1; page <= 10; page++) {
+      const batch = await githubFetch<GitHubRepo[]>(pathFactory(page), tokenOverride ?? accessToken);
       if (!Array.isArray(batch) || !batch.length) break;
-
-      batch.forEach((repo) => {
-        if (!seen.has(repo.full_name)) {
-          seen.add(repo.full_name);
-          repos.push(repo);
-        }
+      batch.forEach((r) => {
+        if (!seen.has(r.full_name)) { seen.add(r.full_name); repos.push(r); }
       });
-
       if (batch.length < 100) break;
     }
   };
 
   try {
-    console.log(`[github-sync] Fetching all repos (private+public) for ${login}`);
+    // Authenticated — sees private repos too
+    console.log(`[github-sync] Fetching all repos (auth) for ${login}...`);
     await loadPages(
-      (page) =>
-        `/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=updated&per_page=100&page=${page}`
+      (page) => `/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=updated&per_page=100&page=${page}`
     );
-    console.log(`[github-sync] Fetched ${repos.length} repos (including private)`);
+    console.log(`[github-sync] ✓ ${repos.length} repos fetched (including private)`);
   } catch (err) {
-    console.warn(`[github-sync] Private repo fetch failed, falling back to public repos:`, err);
-    // Fallback: fetch public repos if the authenticated endpoint fails
+    console.warn(`[github-sync] ⚠️ Authenticated repo fetch failed, trying public:`, err instanceof Error ? err.message : err);
     try {
-      await loadPages((page) => `/users/${encodeURIComponent(login)}/repos?sort=updated&per_page=100&page=${page}`);
-      console.log(`[github-sync] Fallback: fetched ${repos.length} public repos`);
+      // Public repos — use env token if available for higher rate limits
+      await loadPages(
+        (page) => `/users/${encodeURIComponent(login)}/repos?sort=updated&per_page=100&page=${page}`,
+        ENV_GITHUB_TOKEN || accessToken
+      );
+      console.log(`[github-sync] ✓ Fallback: ${repos.length} public repos fetched`);
     } catch (err2) {
-      console.error(`[github-sync] Public repo fallback also failed:`, err2);
+      console.error(`[github-sync] ❌ Both repo fetches failed:`, err2 instanceof Error ? err2.message : err2);
     }
   }
 
   return repos;
 };
 
-// Safely fetch GitHub search count — returns 0 if rate-limited or any error
-const safeSearchCount = async (query: string, token: string): Promise<number> => {
-  try {
-    const encoded = encodeURIComponent(query);
-    const result = await githubFetch<SearchResult>(`/search/issues?q=${encoded}&per_page=1`, token);
-    return result.total_count ?? 0;
-  } catch (err) {
-    console.warn(`[github-sync] Search failed for "${query}":`, err);
-    return 0;
-  }
-};
+// ---------------------------------------------------------------------------
+// Main export
+// ---------------------------------------------------------------------------
 
 export const syncGithubInsights = async ({
   firestore,
@@ -317,22 +352,26 @@ export const syncGithubInsights = async ({
   fallbackName?: string | null;
   fallbackEmail?: string | null;
 }): Promise<{ repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles: number }> => {
-  console.log("[github-sync] Starting full GitHub sync for uid:", uid);
 
-  // Step 1: Fetch user profile
-  const me = await githubFetch<GitHubUser>("/user", accessToken);
-  console.log("[github-sync] GitHub user:", me.login);
+  // Use env token as last resort if no user token provided
+  const effectiveToken = accessToken || ENV_GITHUB_TOKEN;
+  if (!effectiveToken) throw new Error("No GitHub token available");
 
+  console.log(`[github-sync] ▶ Starting full GitHub sync for uid: ${uid}`);
+  console.log(`[github-sync] Token source: ${accessToken ? "user OAuth" : "env fallback"}`);
+
+  // ── Step 1: User profile ─────────────────────────────────────────────────
+  const me = await githubFetch<GitHubUser>("/user", effectiveToken);
+  console.log(`[github-sync] GitHub user: ${me.login} (${me.name ?? "no name"})`);
+
+  // ── Step 2: Parallel stats ───────────────────────────────────────────────
   const contributionCalendarQuery = `
     query ViewerCalendar {
       viewer {
         contributionsCollection {
           contributionCalendar {
             weeks {
-              contributionDays {
-                contributionCount
-                date
-              }
+              contributionDays { contributionCount date }
             }
           }
         }
@@ -340,62 +379,57 @@ export const syncGithubInsights = async ({
     }
   `;
 
-  // Step 2: Fetch stats in parallel — all failures are safely caught
-  console.log("[github-sync] Fetching PRs, issues, reviews, and contribution calendar in parallel...");
+  console.log(`[github-sync] Fetching PRs, issues, reviews, and heatmap in parallel...`);
   const [prsMergedCount, issuesClosedCount, codeReviewsCount, contributionCalendar] = await Promise.all([
-    safeSearchCount(`author:${me.login} is:pr is:merged`, accessToken),
-    safeSearchCount(`author:${me.login} is:issue is:closed`, accessToken),
-    safeSearchCount(`reviewed-by:${me.login} is:pr`, accessToken),
-    githubGraphqlFetch<ContributionCalendarResponse>(contributionCalendarQuery, accessToken).catch((err) => {
-      console.warn("[github-sync] Contribution calendar GraphQL failed:", err);
-      return {};
+    safeSearchCount(`author:${me.login} is:pr is:merged`, effectiveToken),
+    safeSearchCount(`author:${me.login} is:issue is:closed`, effectiveToken),
+    safeSearchCount(`reviewed-by:${me.login} is:pr`, effectiveToken),
+    githubGraphqlFetch<ContributionCalendarResponse>(contributionCalendarQuery, effectiveToken).catch((err) => {
+      console.warn("[github-sync] ⚠️ Contribution calendar skipped:", err instanceof Error ? err.message : err);
+      return {} as ContributionCalendarResponse;
     }),
   ]);
+  console.log(`[github-sync] PRs merged: ${prsMergedCount} | Issues closed: ${issuesClosedCount} | Reviews: ${codeReviewsCount}`);
 
-  console.log(`[github-sync] PRs merged: ${prsMergedCount}, Issues closed: ${issuesClosedCount}, Code reviews: ${codeReviewsCount}`);
-
-  // Step 3: Fetch repositories
-  console.log("[github-sync] Fetching user repositories...");
-  const repos = await fetchUserRepos(me.login, accessToken);
-  console.log(`[github-sync] Total repos fetched: ${repos.length}`);
-
-  const privateCount = repos.filter((repo) => repo.private).length;
+  // ── Step 3: Repositories ─────────────────────────────────────────────────
+  const repos = await fetchUserRepos(me.login, effectiveToken);
+  const privateCount = repos.filter((r) => r.private).length;
   const publicCount = repos.length - privateCount;
-  console.log(`[github-sync] Private: ${privateCount}, Public: ${publicCount}`);
+  console.log(`[github-sync] Repos: ${repos.length} total (${privateCount} private, ${publicCount} public)`);
 
-  // Step 4: Build metrics
+  // ── Step 4: Build derived metrics ────────────────────────────────────────
   const bars = buildMonthlyBars(repos);
   const heatmapWeeks = buildHeatmapWeeks(
     (contributionCalendar as ContributionCalendarResponse).data?.viewer?.contributionsCollection?.contributionCalendar?.weeks
   );
-  console.log(`[github-sync] Heatmap weeks: ${heatmapWeeks.length}, Bars: ${bars.length}`);
-
   const languages = buildLanguageDistribution(repos);
-  console.log(`[github-sync] Languages:`, languages.map((l) => `${l.name}(${l.value}%)`).join(", "));
-
   const primaryLanguage = languages[0]?.name ?? "TypeScript";
+  console.log(`[github-sync] Heatmap weeks: ${heatmapWeeks.length} | Languages: ${languages.map((l) => `${l.name}(${l.value}%)`).join(", ")}`);
 
   const repoIntelligence = repos
     .map((repo) => {
-      const recencyBoost = Math.max(0, 30 - Math.floor((Date.now() - new Date(repo.pushed_at).getTime()) / 86400000));
+      const recencyDays = Math.floor((Date.now() - new Date(repo.pushed_at).getTime()) / 86400000);
+      const recencyBoost = Math.max(0, 30 - recencyDays);
       const impact = clamp(
-        repo.stargazers_count * 0.4 + repo.forks_count * 0.3 + Math.log10(Math.max(repo.size, 10)) * 2 + recencyBoost * 0.1,
-        0,
-        10
+        repo.stargazers_count * 0.4 +
+        repo.forks_count * 0.3 +
+        Math.log10(Math.max(repo.size, 10)) * 2 +
+        recencyBoost * 0.1,
+        0, 10
       );
       return { name: repo.full_name, impact: Number(impact.toFixed(1)) };
     })
     .sort((a, b) => b.impact - a.impact)
-    .slice(0, 3);
+    .slice(0, 5);
 
+  // ── Step 5: Repo file trees (top 8 repos by recency) ─────────────────────
   const reposBase = [...repos]
     .sort((a, b) => new Date(b.pushed_at).getTime() - new Date(a.pushed_at).getTime())
     .slice(0, 12);
 
-  // Step 5: Fetch repo files (up to 8 repos)
   console.log(`[github-sync] Fetching file trees for top ${Math.min(reposBase.length, 8)} repos...`);
   const repoFilesList = await Promise.all(
-    reposBase.map((repo, idx) => (idx < 8 ? getRepoFiles(repo, accessToken) : Promise.resolve([])))
+    reposBase.map((repo, idx) => idx < 8 ? getRepoFiles(repo, effectiveToken) : Promise.resolve([]))
   );
 
   const reposGlimpse = reposBase.map((repo, idx) => ({
@@ -409,48 +443,56 @@ export const syncGithubInsights = async ({
   }));
 
   const reposWithFiles = reposGlimpse.filter((r) => r.files.length > 0).length;
-  console.log(`[github-sync] Repos with files fetched: ${reposWithFiles}`);
+  console.log(`[github-sync] Repos with file trees: ${reposWithFiles}`);
 
+  // ── Step 6: Calculate scores ──────────────────────────────────────────────
   const contributionStrength = clamp(
     Math.round(
       repos.length * 1.2 +
       privateCount * 1.5 +
       prsMergedCount * 0.25 +
       issuesClosedCount * 0.15 +
-      repoIntelligence.reduce((acc, repo) => acc + repo.impact, 0)
+      repoIntelligence.reduce((acc, r) => acc + r.impact, 0)
     ),
-    15,
-    99
+    15, 99
   );
 
   const consistencyScore = clamp(
-    Number((bars.reduce((acc, value) => acc + value, 0) / Math.max(bars.length, 1) / 10).toFixed(1)),
-    1,
-    10
+    Number((bars.reduce((a, b) => a + b, 0) / Math.max(bars.length, 1) / 10).toFixed(1)),
+    1, 10
   );
 
-  console.log(`[github-sync] Contribution strength: ${contributionStrength}, Consistency: ${consistencyScore}`);
+  const contributionStreak = buildStreak(repos);
+  console.log(`[github-sync] Strength: ${contributionStrength}/100 | Consistency: ${consistencyScore}/10 | Streak: ${contributionStreak} days`);
 
-  // Step 6: Write everything to Firestore
-  console.log("[github-sync] Writing data to Firestore...");
+  // ── Step 7: Write to Firestore ────────────────────────────────────────────
+  console.log(`[github-sync] Writing to Firestore...`);
+
+  const profileName = me.name || fallbackName || me.login;
+  const profileBio = me.bio || `Building with ${primaryLanguage} across ${repos.length} repositories.`;
+
   await Promise.all([
+    // /users/{uid}/profile/main
     setDoc(
       doc(firestore, "users", uid, "profile", "main"),
       {
-        name: me.name || fallbackName || me.login,
-        headline: `${primaryLanguage} Engineer`,
-        bio: me.bio || `Building with ${primaryLanguage} across private and public repositories.`,
+        name: profileName,
+        headline: `${primaryLanguage} Developer`,
+        bio: profileBio,
         links: [
           { label: "GitHub", url: me.html_url },
           ...(me.blog ? [{ label: "Portfolio", url: me.blog }] : []),
         ],
+        updatedAt: serverTimestamp(),
       },
       { merge: true }
     ),
+
+    // /users/{uid}/dashboard/main
     setDoc(
       doc(firestore, "users", uid, "dashboard", "main"),
       {
-        heading: `Welcome back, ${me.name || me.login}`,
+        heading: `Welcome back, ${profileName}`,
         subheading: `Insights from ${repos.length} repositories (${privateCount} private, ${publicCount} public).`,
         contributionStrength,
         consistencyScore,
@@ -462,20 +504,23 @@ export const syncGithubInsights = async ({
           issuesClosed: issuesClosedCount,
         },
         languages,
-        summary: `${me.name || me.login} has ${repos.length} repositories (${privateCount} private) in ${primaryLanguage} and more. Contribution strength: ${contributionStrength}/100. ${prsMergedCount} PRs merged, ${issuesClosedCount} issues closed.`,
+        summary: `${profileName} maintains ${repos.length} repositories (${privateCount} private, ${publicCount} public) with a primary focus on ${primaryLanguage}. Contribution strength: ${contributionStrength}/100. ${prsMergedCount} PRs merged, ${issuesClosedCount} issues closed, ${codeReviewsCount} code reviews — strong engineering collaboration signal.`,
         repoIntelligence,
         repos: reposGlimpse,
-        contributionStreak: buildStreak(repos),
+        contributionStreak,
         openSourceImpact: [
           `${prsMergedCount} pull requests merged across repositories.`,
           `${privateCount} private repositories contributing to experience depth.`,
-          `${me.followers} followers and ${me.following} following on GitHub.`,
-          ...(codeReviewsCount > 0 ? [`${codeReviewsCount} pull requests reviewed — strong collaboration signal.`] : []),
+          `${me.followers} followers, ${me.following} following on GitHub.`,
+          ...(codeReviewsCount > 0 ? [`${codeReviewsCount} pull requests reviewed — active code review culture.`] : []),
+          ...(contributionStreak > 1 ? [`${contributionStreak}-day contribution streak on record.`] : []),
         ],
         syncedAt: serverTimestamp(),
       },
       { merge: true }
     ),
+
+    // /users/{uid}/github/main
     setDoc(
       doc(firestore, "users", uid, "github", "main"),
       {
@@ -484,18 +529,14 @@ export const syncGithubInsights = async ({
         avatarUrl: me.avatar_url,
         privateRepoCount: privateCount,
         publicRepoCount: publicCount,
+        totalRepos: repos.length,
         syncedAt: serverTimestamp(),
       },
       { merge: true }
     ),
   ]);
 
-  console.log("[github-sync] ✅ All data written to Firestore successfully.");
+  console.log(`[github-sync] ✅ Firestore write complete. ${repos.length} repos, ${reposWithFiles} with file trees.`);
 
-  return {
-    repoCount: repos.length,
-    privateRepoCount: privateCount,
-    publicRepoCount: publicCount,
-    reposWithFiles,
-  };
+  return { repoCount: repos.length, privateRepoCount: privateCount, publicRepoCount: publicCount, reposWithFiles };
 };

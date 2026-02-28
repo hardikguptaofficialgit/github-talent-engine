@@ -14,6 +14,7 @@ import { syncGithubInsights } from "@/lib/github-sync";
 
 const GITHUB_TOKEN_KEY = "opensourcehire.github.token";
 const GITHUB_TOKEN_TS_KEY = "opensourcehire.github.token.ts";
+const ENV_GITHUB_TOKEN: string = import.meta.env.VITE_GITHUB_TOKEN ?? "";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -38,6 +39,7 @@ const githubProvider = new GithubAuthProvider();
 githubProvider.addScope("read:user");
 githubProvider.addScope("user:email");
 githubProvider.addScope("repo");
+githubProvider.addScope("read:org");
 githubProvider.setCustomParameters({
   prompt: "consent",
 });
@@ -101,11 +103,18 @@ const syncGithubInsightsWithToken = async ({
     return { repoCount: 0, privateRepoCount: 0, publicRepoCount: 0, reposWithFiles: 0 };
   }
 
-  console.log("[firebase] syncGithubInsightsWithToken: starting full sync for uid:", user.uid);
+  // Use env token as ultimate fallback so sync never completely fails
+  const effectiveToken = accessToken || ENV_GITHUB_TOKEN;
+  if (!effectiveToken) {
+    console.warn("[firebase] No GitHub token available (user token empty, no env fallback).");
+    return { repoCount: 0, privateRepoCount: 0, publicRepoCount: 0, reposWithFiles: 0 };
+  }
+
+  console.log(`[firebase] syncGithubInsightsWithToken: uid=${user.uid}, token=${accessToken ? "user OAuth" : "env fallback"}`);
   return syncGithubInsights({
     firestore: db,
     uid: user.uid,
-    accessToken,
+    accessToken: effectiveToken,
     fallbackName: user.displayName,
     fallbackEmail: user.email,
   });
