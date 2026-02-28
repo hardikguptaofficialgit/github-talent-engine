@@ -13,7 +13,7 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      "fixed top-4 z-[100] flex max-h-screen w-full flex-col-reverse gap-3 p-4 sm:bottom-4 sm:right-4 sm:top-auto sm:flex-col md:max-w-[420px]",
+      "fixed left-1/2 top-6 z-[9999] flex w-full max-w-[440px] -translate-x-1/2 flex-col gap-3 px-4",
       className
     )}
     {...props}
@@ -22,16 +22,16 @@ const ToastViewport = React.forwardRef<
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName;
 
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-start justify-between gap-4 overflow-hidden rounded-xl border px-5 py-4 shadow-lg transition-all data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-top-full sm:data-[state=open]:slide-in-from-bottom-full",
+  "group pointer-events-auto relative flex w-full items-start gap-3 overflow-hidden rounded-xl border px-4 py-3 shadow-xl backdrop-blur-md transition-all duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-top-full data-[state=open]:slide-in-from-top-full",
   {
     variants: {
       variant: {
         default:
-          "border-[#2a2a2a] bg-[#111114] text-white",
+          "border-white/10 bg-[#0f0f13]/95 text-white",
         success:
-          "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+          "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
         destructive:
-          "border-red-500/40 bg-red-500/10 text-red-300",
+          "border-red-500/30 bg-red-500/10 text-red-300",
       },
     },
     defaultVariants: {
@@ -47,7 +47,11 @@ const Toast = React.forwardRef<
 >(({ className, variant, ...props }, ref) => (
   <ToastPrimitives.Root
     ref={ref}
-    className={cn(toastVariants({ variant }), className)}
+    className={cn(
+      toastVariants({ variant }),
+      "rotate-[-0.6deg] hover:rotate-0",
+      className
+    )}
     {...props}
   />
 ));
@@ -59,7 +63,7 @@ const ToastTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitives.Title
     ref={ref}
-    className={cn("text-sm font-semibold tracking-tight", className)}
+    className={cn("text-sm font-semibold leading-none", className)}
     {...props}
   />
 ));
@@ -71,7 +75,7 @@ const ToastDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitives.Description
     ref={ref}
-    className={cn("mt-1 text-xs text-white/70", className)}
+    className={cn("mt-1 text-xs text-white/70 leading-relaxed", className)}
     {...props}
   />
 ));
@@ -85,7 +89,7 @@ const ToastAction = React.forwardRef<
   <ToastPrimitives.Action
     ref={ref}
     className={cn(
-      "inline-flex h-8 items-center justify-center rounded-xl border border-[#ff7a00] bg-[#ff7a00] px-3 text-xs font-semibold text-black transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#ff7a00]/50 disabled:pointer-events-none disabled:opacity-50",
+      "ml-auto inline-flex h-7 items-center justify-center rounded-lg border border-white/15 bg-white/5 px-3 text-[11px] font-medium text-white transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:pointer-events-none disabled:opacity-50",
       className
     )}
     {...props}
@@ -100,13 +104,13 @@ const ToastClose = React.forwardRef<
   <ToastPrimitives.Close
     ref={ref}
     className={cn(
-      "absolute right-3 top-3 rounded-xl p-1 text-white/50 transition hover:text-white focus:outline-none focus:ring-2 focus:ring-[#ff7a00]/50",
+      "absolute right-2 top-2 rounded-md p-1 text-white/40 transition hover:text-white focus:outline-none focus:ring-2 focus:ring-white/20",
       className
     )}
     toast-close=""
     {...props}
   >
-    <X className="h-4 w-4" />
+    <X className="h-3.5 w-3.5" />
   </ToastPrimitives.Close>
 ));
 ToastClose.displayName = ToastPrimitives.Close.displayName;

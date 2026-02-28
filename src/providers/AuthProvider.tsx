@@ -8,9 +8,9 @@ const DEMO_UID = "demo-user";
 const createDemoUser = (): User =>
   ({
     uid: DEMO_UID,
-    displayName: "Aarav Sharma",
-    email: "aarav.demo@opensourcehire.dev",
-    photoURL: "https://api.dicebear.com/9.x/thumbs/svg?seed=Aarav%20Sharma",
+    displayName: "Hardik Gupta",
+    email: "hardik@konvergehack.in",
+    photoURL: "https://api.dicebear.com/9.x/thumbs/svg?seed=Hardik%20Gupta",
   } as User);
 
 type AuthContextValue = {

@@ -103,7 +103,7 @@ const Navbar = () => {
             alt="OpenSourceHire"
             className="h-6 w-6 object-contain"
           />
-          <span>OpenSourceHire</span>
+          <span>OpenSourceHire For Konverge</span>
         </Link>
 
         {/* Main Navigation */}

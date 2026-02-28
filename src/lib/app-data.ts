@@ -149,7 +149,7 @@ const DEMO_PROFILE_KEY = "opensourcehire.demo.profile";
 const DEMO_APPLICATIONS_KEY = "opensourcehire.demo.applications";
 
 const DEMO_DASHBOARD: DashboardData = {
-  heading: "Welcome back, Aarav",
+  heading: "Welcome back, Hardik",
   subheading: "Live demo data from a full-stack GitHub profile and role trends.",
   contributionStrength: 86,
   consistencyScore: 8.4,
@@ -166,16 +166,16 @@ const DEMO_DASHBOARD: DashboardData = {
     { name: "SQL", value: 14 },
   ],
   summary:
-    "Aarav ships consistently across frontend and backend repositories, with strong collaboration and pragmatic delivery velocity.",
+    "Hardik ships consistently across frontend and backend repositories, with strong collaboration and pragmatic delivery velocity.",
   repoIntelligence: [
-    { name: "aarav-sharma/job-radar", impact: 9.4 },
-    { name: "aarav-sharma/gh-analytics-engine", impact: 8.8 },
-    { name: "aarav-sharma/interview-tracker-pro", impact: 8.2 },
+    { name: "hardik-gupta/job-radar", impact: 9.4 },
+    { name: "hardik-gupta/gh-analytics-engine", impact: 8.8 },
+    { name: "hardik-gupta/interview-tracker-pro", impact: 8.2 },
   ],
   repos: [
     {
-      name: "aarav-sharma/job-radar",
-      url: "https://github.com/aarav-sharma/job-radar",
+      name: "hardik-gupta/job-radar",
+      url: "https://github.com/hardik-gupta/job-radar",
       isPrivate: false,
       language: "TypeScript",
       stars: 31,
@@ -183,8 +183,8 @@ const DEMO_DASHBOARD: DashboardData = {
       files: ["src/app/dashboard.tsx", "src/lib/trends.ts", "src/components/fit-score-card.tsx", "README.md", "package.json"],
     },
     {
-      name: "aarav-sharma/gh-analytics-engine",
-      url: "https://github.com/aarav-sharma/gh-analytics-engine",
+      name: "hardik-gupta/gh-analytics-engine",
+      url: "https://github.com/hardik-gupta/gh-analytics-engine",
       isPrivate: true,
       language: "Python",
       stars: 12,
@@ -192,8 +192,8 @@ const DEMO_DASHBOARD: DashboardData = {
       files: ["engine/collector.py", "engine/scoring.py", "engine/heatmap.py", "tests/test_scoring.py", "pyproject.toml"],
     },
     {
-      name: "aarav-sharma/interview-tracker-pro",
-      url: "https://github.com/aarav-sharma/interview-tracker-pro",
+      name: "hardik-gupta/interview-tracker-pro",
+      url: "https://github.com/hardik-gupta/interview-tracker-pro",
       isPrivate: false,
       language: "Go",
       stars: 22,
@@ -210,13 +210,13 @@ const DEMO_DASHBOARD: DashboardData = {
 };
 
 const DEMO_PROFILE: ProfileData = {
-  name: "Aarav Sharma",
+  name: "Hardik Gupta",
   headline: "Full-Stack Engineer | TypeScript, Python, Go",
   bio: "I build developer-focused products and workflow automation with strong UX, testing, and scalable backend design.",
   links: [
-    { label: "GitHub", url: "https://github.com/aarav-sharma" },
-    { label: "Portfolio", url: "https://aarav-sharma.dev" },
-    { label: "LinkedIn", url: "https://www.linkedin.com/in/aarav-sharma-dev/" },
+    { label: "GitHub", url: "https://github.com/hardik-gupta" },
+    { label: "Portfolio", url: "https://hardik-gupta.dev" },
+    { label: "LinkedIn", url: "https://www.linkedin.com/in/hardik-gupta-dev/" },
   ],
 };
 
@@ -231,8 +231,8 @@ const DEMO_APPLICATIONS: ApplicationItem[] = [
     match: 94,
     tags: ["TypeScript", "React", "DX"],
     foot: "Interview stage",
-    applicantName: "Aarav Sharma",
-    applicantEmail: "aarav.demo@opensourcehire.dev",
+    applicantName: "Hardik Gupta",
+    applicantEmail: "hardik@konvergehack.in",
   },
   {
     id: "demo-app-2",
@@ -244,8 +244,8 @@ const DEMO_APPLICATIONS: ApplicationItem[] = [
     match: 90,
     tags: ["Go", "API Design", "PostgreSQL"],
     foot: "Application submitted",
-    applicantName: "Aarav Sharma",
-    applicantEmail: "aarav.demo@opensourcehire.dev",
+    applicantName: "Hardik Gupta",
+    applicantEmail: "hardik@konvergehack.in",
   },
   {
     id: "demo-app-3",
@@ -257,8 +257,8 @@ const DEMO_APPLICATIONS: ApplicationItem[] = [
     match: 88,
     tags: ["Rust", "Networking", "Reliability"],
     foot: "Saved for later",
-    applicantName: "Aarav Sharma",
-    applicantEmail: "aarav.demo@opensourcehire.dev",
+    applicantName: "Hardik Gupta",
+    applicantEmail: "hardik@konvergehack.in",
   },
 ];
 
