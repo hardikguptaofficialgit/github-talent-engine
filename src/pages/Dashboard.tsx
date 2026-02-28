@@ -17,14 +17,16 @@ const Dashboard = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedRepo, setSelectedRepo] = useState<string>("");
+  const [isSyncing, setIsSyncing] = useState(false);
   const autoSyncRef = useRef(false);
 
-  const { data, refetch } = useQuery({
+  const { data, refetch, isLoading } = useQuery({
     queryKey: ["dashboard-data", user?.uid],
     queryFn: () => getDashboardData(user?.uid ?? ""),
     enabled: !!user?.uid,
     staleTime: 1000 * 60 * 5,
   });
+
   const { data: jobRecommendations = [] } = useQuery({
     queryKey: ["dashboard-job-trends", user?.uid],
     queryFn: () => (user?.uid ? getRecommendedJobsForUser(user.uid) : getJobsData()),
@@ -102,28 +104,15 @@ const Dashboard = () => {
     }
   });
 
-  if (!user) {
-    return (
-      <div className="app-bg min-h-screen text-white pb-10">
-        <Navbar />
-        <main className="px-4 md:px-8 pt-6">
-          <div className="mx-auto max-w-[900px] app-panel rounded-2xl p-8">
-            <h1 className="text-4xl font-bold">Dashboard</h1>
-            <p className="mt-3 text-white/65">Sign in to view your personalized developer dashboard.</p>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
   const hasInsights =
     (data?.repoIntelligence?.length ?? 0) > 0 ||
     repos.length > 0 ||
     (data?.languages?.length ?? 0) > 0 ||
     (data?.contributionStrength ?? 0) > 0;
 
+  // ✅ useEffect MUST be before any conditional return (Rules of Hooks)
   useEffect(() => {
-    if (!user || autoSyncRef.current || hasInsights) return;
+    if (!user || autoSyncRef.current || hasInsights || isLoading) return;
     const token = getStoredGithubToken();
     if (!token) return;
 
@@ -139,7 +128,10 @@ const Dashboard = () => {
         });
       })
       .catch(async (error) => {
-        await syncGithubProfileFallback({ user, accessToken: token });
+        const token2 = getStoredGithubToken();
+        if (token2) {
+          await syncGithubProfileFallback({ user, accessToken: token2 });
+        }
         if (user?.uid) {
           queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
         }
@@ -152,7 +144,7 @@ const Dashboard = () => {
           description: "Loaded basic profile data. Re-authorize GitHub to sync full insights.",
         });
       });
-  }, [user, hasInsights, queryClient]);
+  }, [user, hasInsights, queryClient, isLoading]);
 
   const monthLabels = (() => {
     const totalWeeks = Math.max(data?.heatmapWeeks?.length ?? 0, 52);
@@ -169,23 +161,104 @@ const Dashboard = () => {
   })();
 
   const handleResync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    console.log("[Dashboard] handleResync: starting...");
+
     try {
       const token = user ? getStoredGithubToken() : null;
-      const sync = token && user
-        ? await syncGithubInsightsWithToken({ user, accessToken: token })
-        : await refreshGithubInsights();
+      let sync: { repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles?: number };
+
+      if (token && user) {
+        // Tier 1: Try full sync with stored token
+        console.log("[Dashboard] Tier 1: attempting sync with stored token...");
+        try {
+          sync = await syncGithubInsightsWithToken({ user, accessToken: token });
+          console.log("[Dashboard] Tier 1 succeeded:", sync);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn("[Dashboard] Tier 1 failed:", msg);
+
+          // If token is expired/invalid, clear it and fall through to popup
+          if (msg.includes("401") || msg.includes("403") || msg.includes("token")) {
+            clearStoredGithubToken();
+            console.log("[Dashboard] Token expired — clearing and opening popup for re-auth...");
+          }
+
+          // Tier 2: Re-authorize via popup
+          console.log("[Dashboard] Tier 2: opening GitHub OAuth popup...");
+          try {
+            const result = await refreshGithubInsights();
+            sync = result;
+            console.log("[Dashboard] Tier 2 succeeded:", sync);
+          } catch (err2) {
+            const msg2 = err2 instanceof Error ? err2.message : String(err2);
+            console.warn("[Dashboard] Tier 2 failed:", msg2);
+
+            // Tier 3: Profile-only fallback with the stored token (or whatever we have)
+            const freshToken = getStoredGithubToken();
+            if (freshToken && user) {
+              console.log("[Dashboard] Tier 3: profile fallback...");
+              const fallback = await syncGithubProfileFallback({ user, accessToken: freshToken });
+              sync = { repoCount: fallback.repoCount, privateRepoCount: 0, publicRepoCount: fallback.repoCount };
+              console.log("[Dashboard] Tier 3 fallback done:", sync);
+              toast({
+                title: "Partial sync completed",
+                description: `Loaded basic profile. ${fallback.repoCount} repositories found. Re-authorize for full insights.`,
+              });
+            } else {
+              throw new Error(msg2); // No recourse
+            }
+          }
+        }
+      } else {
+        // No stored token — open popup directly
+        console.log("[Dashboard] No stored token — opening GitHub OAuth popup...");
+        const result = await refreshGithubInsights();
+        sync = result;
+        console.log("[Dashboard] Popup sync succeeded:", sync);
+      }
+
       if (user?.uid) {
         await queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
       }
       await refetch();
+
       toast({
-        title: "Insights refreshed",
-        description: `${sync.repoCount} repositories synced (${sync.privateRepoCount} private).`,
+        title: "Insights refreshed ✓",
+        description: `${sync.repoCount} repositories synced (${sync.privateRepoCount ?? 0} private, ${sync.publicRepoCount ?? 0} public).`,
       });
-    } catch {
-      toast({ title: "Refresh failed", description: "GitHub authorization failed. Please re-authorize and try again." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Dashboard] handleResync failed:", message);
+
+      if (message.toLowerCase().includes("popup") || message.toLowerCase().includes("closed")) {
+        toast({ title: "Popup blocked or closed", description: "Allow popups for this site and try again." });
+      } else if (message.includes("401") || message.includes("403")) {
+        toast({ title: "GitHub authorization expired", description: "Please re-authorize your GitHub account." });
+      } else {
+        toast({ title: "Refresh failed", description: `Error: ${message}` });
+      }
+    } finally {
+      setIsSyncing(false);
+      console.log("[Dashboard] handleResync: done.");
     }
   };
+
+  // ✅ Conditional return AFTER all hooks
+  if (!user) {
+    return (
+      <div className="app-bg min-h-screen text-white pb-10">
+        <Navbar />
+        <main className="px-4 md:px-8 pt-6">
+          <div className="mx-auto max-w-[900px] app-panel rounded-2xl p-8">
+            <h1 className="text-4xl font-bold">Dashboard</h1>
+            <p className="mt-3 text-white/65">Sign in to view your personalized developer dashboard.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app-bg min-h-screen text-white pb-10">
@@ -198,15 +271,37 @@ const Dashboard = () => {
               <h1 className="text-5xl font-bold">{data?.heading ?? "Dashboard"}</h1>
               <p className="text-white/55 mt-2">{data?.subheading ?? "Your metrics are loading."}</p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center">
               <div className="app-panel rounded-full px-5 py-2 text-sm">Live developer metrics</div>
-              <button onClick={handleResync} className="app-btn-primary">Refresh insights</button>
+              <button
+                onClick={handleResync}
+                disabled={isSyncing}
+                className="app-btn-primary flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isSyncing ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Syncing…
+                  </>
+                ) : (
+                  "Refresh insights"
+                )}
+              </button>
             </div>
           </div>
 
-          {!hasInsights && (
+          {!hasInsights && !isLoading && (
             <div className="mb-5 rounded-2xl border border-white/15 bg-[#0c172f] px-4 py-3 text-sm text-white/75">
-              We could not find synced GitHub insights yet. Click <b>Refresh insights</b> to re-authorize and sync.
+              We could not find synced GitHub insights yet. Click <b>Refresh insights</b> to re-authorize and sync your full GitHub data.
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="mb-5 rounded-2xl border border-white/10 bg-[#0c172f] px-4 py-3 text-sm text-white/55 animate-pulse">
+              Loading your GitHub insights…
             </div>
           )}
 
@@ -285,23 +380,24 @@ const Dashboard = () => {
                     ))}
                   </div>
                   <div className="flex gap-[4px]">
-                  {(data?.heatmapWeeks ?? []).map((week, wi) => (
-                    <div key={wi} className="flex flex-col gap-[4px]">
-                      {week.map((level, di) => (
-                        <span key={di} className={`h-[11px] w-[11px] rounded-[2px] heatmap-${level} outline outline-1 outline-white/5`} />
+                    {(data?.heatmapWeeks ?? []).map((week, wi) => (
+                      <div key={wi} className="flex flex-col gap-[4px]">
+                        {week.map((level, di) => (
+                          <span key={di} className={`h-[11px] w-[11px] rounded-[2px] heatmap-${level} outline outline-1 outline-white/5`} />
+                        ))}
+                      </div>
+                    ))}
+                    {!(data?.heatmapWeeks?.length) &&
+                      Array.from({ length: 52 }).map((_, wi) => (
+                        <div key={wi} className="flex flex-col gap-[4px]">
+                          {Array.from({ length: 7 }).map((_, di) => (
+                            <span
+                              key={di}
+                              className={`h-[11px] w-[11px] rounded-[2px] outline outline-1 outline-white/5 ${isLoading ? "bg-white/5 animate-pulse" : "heatmap-0"}`}
+                            />
+                          ))}
+                        </div>
                       ))}
-                    </div>
-                  ))}
-                  {!(data?.heatmapWeeks?.length) &&
-                    Array.from({ length: 112 }).map((_, i) => {
-                      const level = ["bg-white/10", "bg-white/25", "bg-white/45", "bg-white/80"][i % 4];
-                      return (
-                        <span
-                          key={i}
-                          className={`h-[11px] w-[11px] rounded-[2px] outline outline-1 outline-white/5 ${i % 5 === 0 ? "bg-white/5" : level}`}
-                        />
-                      );
-                    })}
                   </div>
                 </div>
               </div>
@@ -309,11 +405,23 @@ const Dashboard = () => {
 
             <section className="app-panel rounded-2xl p-6 lg:col-span-4 min-h-[260px]">
               <h3 className="text-lg font-semibold">Language Distribution</h3>
-              <ul className="mt-4 space-y-2 text-sm text-white/70">
-                {(data?.languages ?? []).map((lang) => (
-                  <li key={lang.name} className="flex justify-between"><span>{lang.name}</span><span>{lang.value}%</span></li>
-                ))}
-              </ul>
+              {(data?.languages ?? []).length > 0 ? (
+                <ul className="mt-4 space-y-2 text-sm text-white/70">
+                  {(data?.languages ?? []).map((lang) => (
+                    <li key={lang.name} className="flex justify-between items-center gap-2">
+                      <span>{lang.name}</span>
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 rounded-full bg-[#ff7a00]/30 w-20 overflow-hidden">
+                          <div className="h-full bg-[#ff7a00] rounded-full" style={{ width: `${lang.value}%` }} />
+                        </div>
+                        <span className="text-xs text-white/50 w-8 text-right">{lang.value}%</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-4 text-sm text-white/40">No language data yet. Refresh insights to analyze your repositories.</p>
+              )}
             </section>
 
             <section className="app-panel rounded-2xl p-6 lg:col-span-12">
@@ -395,15 +503,24 @@ const Dashboard = () => {
 
             <section className="app-panel rounded-2xl p-6 lg:col-span-8">
               <h3 className="text-lg font-semibold">AI Developer Summary</h3>
-              <p className="mt-4 text-white/70 text-sm leading-6">{data?.summary}</p>
+              <p className="mt-4 text-white/70 text-sm leading-6">
+                {data?.summary || "Sync your GitHub to generate an AI-powered developer summary based on your repositories, languages, and contributions."}
+              </p>
             </section>
 
             <section className="app-panel rounded-2xl p-6 lg:col-span-4">
               <h3 className="text-lg font-semibold">Repo Intelligence</h3>
               <div className="mt-4 text-sm space-y-4 text-white/70">
-                {(data?.repoIntelligence ?? []).map((repo) => (
-                  <p key={repo.name} className="flex justify-between"><span>{repo.name}</span><span className="text-xs">IMPACT {repo.impact}</span></p>
-                ))}
+                {(data?.repoIntelligence ?? []).length > 0 ? (
+                  (data?.repoIntelligence ?? []).map((repo) => (
+                    <p key={repo.name} className="flex justify-between">
+                      <span className="truncate mr-2">{repo.name}</span>
+                      <span className="text-xs shrink-0">IMPACT {repo.impact}</span>
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-white/40">No repository intelligence yet.</p>
+                )}
               </div>
             </section>
 
@@ -433,115 +550,114 @@ const Dashboard = () => {
               </div>
             </section>
 
-          <section className="rounded-xl border border-[#2a2a2a] bg-[#0b0b0f] p-6 lg:col-span-12">
-  <div className="flex items-center justify-between">
-    <h3 className="text-lg font-semibold text-white">
-      Repositories and Files
-    </h3>
-    <span className="rounded-xl border border-[#ff7a00]/40 bg-[#1a0f07] px-3 py-1 text-[11px] font-semibold text-[#ff9a3c]">
-      {repos.length} recent repos
-    </span>
-  </div>
-
-  <div className="mt-5 grid gap-5 lg:grid-cols-[360px_1fr]">
-    {/* Left: Repo List */}
-    <div className="rounded-xl border border-[#242424] bg-[#111114] p-3 max-h-[420px] overflow-y-auto">
-      <div className="space-y-2">
-        {repos.map((repo) => {
-          const active = (selectedRepoData?.name ?? "") === repo.name;
-
-          return (
-            <button
-              key={repo.name}
-              onClick={() => setSelectedRepo(repo.name)}
-              className={`w-full rounded-xl border px-3 py-2 text-left transition ${
-                active
-                  ? "border-[#ff7a00] bg-[#1a0f07]"
-                  : "border-[#2a2a2a] bg-[#141418] hover:border-[#ff7a00]/60"
-              }`}
-            >
-              <p className="truncate text-sm font-semibold text-white">
-                {repo.name}
-              </p>
-              <p className="mt-1 text-xs text-white/60">
-                {repo.language} | {repo.stars} stars
-              </p>
-
-              <div className="mt-2 flex items-center gap-2">
-                <span
-                  className={
-                    repo.isPrivate
-                      ? "rounded-xl border border-[#ff7a00]/40 bg-[#1a0f07] px-2 py-0.5 text-[10px] text-[#ff9a3c]"
-                      : "rounded-xl border border-[#333] bg-[#1a1a1f] px-2 py-0.5 text-[10px] text-white/70"
-                  }
-                >
-                  {repo.isPrivate ? "Private" : "Public"}
+            <section className="rounded-xl border border-[#2a2a2a] bg-[#0b0b0f] p-6 lg:col-span-12">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-white">
+                  Repositories and Files
+                </h3>
+                <span className="rounded-xl border border-[#ff7a00]/40 bg-[#1a0f07] px-3 py-1 text-[11px] font-semibold text-[#ff9a3c]">
+                  {repos.length} recent repos
                 </span>
               </div>
-            </button>
-          );
-        })}
 
-        {repos.length === 0 && (
-          <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#141418] px-3 py-3 text-sm text-white/60">
-            No repositories available yet.
-          </p>
-        )}
-      </div>
-    </div>
+              <div className="mt-5 grid gap-5 lg:grid-cols-[360px_1fr]">
+                {/* Left: Repo List */}
+                <div className="rounded-xl border border-[#242424] bg-[#111114] p-3 max-h-[420px] overflow-y-auto">
+                  <div className="space-y-2">
+                    {repos.map((repo) => {
+                      const active = (selectedRepoData?.name ?? "") === repo.name;
 
-    {/* Right: File Preview */}
-    <div className="rounded-xl border border-[#242424] bg-[#111114] p-4 min-h-[240px]">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-base font-semibold text-white">
-            {selectedRepoData?.name ?? "Select a repository"}
-          </p>
-          <p className="text-xs text-white/50">
-            File preview from repository tree
-          </p>
-        </div>
+                      return (
+                        <button
+                          key={repo.name}
+                          onClick={() => setSelectedRepo(repo.name)}
+                          className={`w-full rounded-xl border px-3 py-2 text-left transition ${active
+                              ? "border-[#ff7a00] bg-[#1a0f07]"
+                              : "border-[#2a2a2a] bg-[#141418] hover:border-[#ff7a00]/60"
+                            }`}
+                        >
+                          <p className="truncate text-sm font-semibold text-white">
+                            {repo.name}
+                          </p>
+                          <p className="mt-1 text-xs text-white/60">
+                            {repo.language} | {repo.stars} stars
+                          </p>
 
-        {selectedRepoData && (
-          <a
-            href={selectedRepoData.url}
-            target="_blank"
-            rel="noreferrer"
-            className="h-8 rounded-xl border border-[#ff7a00] bg-[#ff7a00] px-3 text-xs font-semibold text-black flex items-center justify-center"
-          >
-            Open Repo
-          </a>
-        )}
-      </div>
+                          <div className="mt-2 flex items-center gap-2">
+                            <span
+                              className={
+                                repo.isPrivate
+                                  ? "rounded-xl border border-[#ff7a00]/40 bg-[#1a0f07] px-2 py-0.5 text-[10px] text-[#ff9a3c]"
+                                  : "rounded-xl border border-[#333] bg-[#1a1a1f] px-2 py-0.5 text-[10px] text-white/70"
+                              }
+                            >
+                              {repo.isPrivate ? "Private" : "Public"}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
 
-      <div className="mt-4 rounded-xl border border-[#2a2a2a] bg-[#141418] p-3 max-h-[320px] overflow-y-auto">
-        <div className="space-y-1.5 font-mono text-xs text-white/80">
-          {(selectedRepoData?.files ?? []).map((file) => (
-            <p
-              key={file}
-              className="truncate rounded-xl bg-[#1a1a1f] px-2 py-1 text-[#ffb067]"
-            >
-              {file}
-            </p>
-          ))}
+                    {repos.length === 0 && (
+                      <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#141418] px-3 py-3 text-sm text-white/60">
+                        {isLoading ? "Loading repositories…" : "No repositories available yet. Click Refresh insights."}
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-          {selectedRepoData &&
-            selectedRepoData.files.length === 0 && (
-              <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#1a1a1f] px-3 py-2 text-white/60">
-                No file preview available yet. Click Refresh insights to fetch files.
-              </p>
-            )}
+                {/* Right: File Preview */}
+                <div className="rounded-xl border border-[#242424] bg-[#111114] p-4 min-h-[240px]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-base font-semibold text-white">
+                        {selectedRepoData?.name ?? "Select a repository"}
+                      </p>
+                      <p className="text-xs text-white/50">
+                        File preview from repository tree
+                      </p>
+                    </div>
 
-          {!selectedRepoData && (
-            <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#1a1a1f] px-3 py-2 text-white/60">
-              No repositories loaded yet. Click Refresh insights.
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
+                    {selectedRepoData && (
+                      <a
+                        href={selectedRepoData.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="h-8 rounded-xl border border-[#ff7a00] bg-[#ff7a00] px-3 text-xs font-semibold text-black flex items-center justify-center"
+                      >
+                        Open Repo
+                      </a>
+                    )}
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-[#2a2a2a] bg-[#141418] p-3 max-h-[320px] overflow-y-auto">
+                    <div className="space-y-1.5 font-mono text-xs text-white/80">
+                      {(selectedRepoData?.files ?? []).map((file) => (
+                        <p
+                          key={file}
+                          className="truncate rounded-xl bg-[#1a1a1f] px-2 py-1 text-[#ffb067]"
+                        >
+                          {file}
+                        </p>
+                      ))}
+
+                      {selectedRepoData &&
+                        selectedRepoData.files.length === 0 && (
+                          <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#1a1a1f] px-3 py-2 text-white/60">
+                            No file preview available yet. Click Refresh insights to fetch files.
+                          </p>
+                        )}
+
+                      {!selectedRepoData && (
+                        <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#1a1a1f] px-3 py-2 text-white/60">
+                          No repositories loaded yet. Click Refresh insights.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
             <section className="app-panel rounded-2xl p-6 lg:col-span-4">
               <h3 className="text-lg font-semibold">Contribution Streak</h3>
               <p className="mt-3 text-white/55 text-sm">You are on a {data?.contributionStreak ?? 0} day contribution streak.</p>
@@ -550,9 +666,13 @@ const Dashboard = () => {
             <section className="app-panel rounded-2xl p-6 lg:col-span-8">
               <h3 className="text-lg font-semibold">Open Source Impact</h3>
               <ul className="mt-4 space-y-2 text-sm text-white/55">
-                {(data?.openSourceImpact ?? []).map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
+                {(data?.openSourceImpact ?? []).length > 0 ? (
+                  (data?.openSourceImpact ?? []).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))
+                ) : (
+                  <li className="text-white/30">Sync GitHub to see your open source impact summary.</li>
+                )}
               </ul>
             </section>
           </div>

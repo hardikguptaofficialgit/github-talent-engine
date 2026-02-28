@@ -97,9 +97,11 @@ const syncGithubInsightsWithToken = async ({
   accessToken: string;
 }): Promise<{ repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles: number }> => {
   if (!db) {
+    console.warn("[firebase] Firestore not available — skipping sync.");
     return { repoCount: 0, privateRepoCount: 0, publicRepoCount: 0, reposWithFiles: 0 };
   }
 
+  console.log("[firebase] syncGithubInsightsWithToken: starting full sync for uid:", user.uid);
   return syncGithubInsights({
     firestore: db,
     uid: user.uid,
@@ -117,18 +119,22 @@ const refreshGithubInsights = async (): Promise<{
   reposWithFiles: number;
 }> => {
   if (!auth || !db) {
+    console.warn("[firebase] Auth or Firestore not available — cannot refresh.");
     return { user: null, repoCount: 0, privateRepoCount: 0, publicRepoCount: 0, reposWithFiles: 0 };
   }
 
+  console.log("[firebase] refreshGithubInsights: opening GitHub OAuth popup...");
   const result: UserCredential = await signInWithPopup(auth, githubProvider);
   const credential = GithubAuthProvider.credentialFromResult(result);
   const accessToken = credential?.accessToken;
 
   if (!accessToken) {
-    throw new Error("Missing GitHub access token");
+    throw new Error("GitHub OAuth succeeded but no access token was returned.");
   }
 
+  console.log("[firebase] GitHub OAuth successful, storing token and syncing...");
   storeGithubToken(accessToken);
+
   let sync: { repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles: number };
   try {
     sync = await syncGithubInsights({
@@ -138,7 +144,8 @@ const refreshGithubInsights = async (): Promise<{
       fallbackName: result.user.displayName,
       fallbackEmail: result.user.email,
     });
-  } catch {
+  } catch (err) {
+    console.warn("[firebase] Full sync failed after popup, using profile fallback:", err);
     const fallback = await syncGithubProfileFallback({ user: result.user, accessToken });
     sync = { repoCount: fallback.repoCount, privateRepoCount: 0, publicRepoCount: fallback.repoCount, reposWithFiles: 0 };
   }
@@ -159,7 +166,7 @@ const syncGithubProfileFallback = async ({
   user: User;
   accessToken: string;
 }): Promise<{ login: string | null; repoCount: number }> => {
-  if (!db) return { login: null };
+  if (!db) return { login: null, repoCount: 0 };
 
   try {
     const response = await fetch("https://api.github.com/user", {
@@ -171,7 +178,7 @@ const syncGithubProfileFallback = async ({
     });
 
     if (!response.ok) {
-      return { login: null };
+      return { login: null, repoCount: 0 };
     }
 
     const payload = (await response.json()) as {
@@ -238,9 +245,9 @@ const syncGithubProfileFallback = async ({
     const totalLangs = Array.from(languageCounts.values()).reduce((acc, value) => acc + value, 0);
     const languages = totalLangs
       ? Array.from(languageCounts.entries())
-          .map(([name, count]) => ({ name, value: Math.round((count / totalLangs) * 100) }))
-          .sort((a, b) => b.value - a.value)
-          .slice(0, 5)
+        .map(([name, count]) => ({ name, value: Math.round((count / totalLangs) * 100) }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5)
       : [];
 
     await Promise.all([

@@ -75,7 +75,10 @@ type ContributionCalendarResponse = {
 };
 
 const githubFetch = async <T>(endpoint: string, token: string): Promise<T> => {
-  const response = await fetch(`https://api.github.com${endpoint}`, {
+  const url = `https://api.github.com${endpoint}`;
+  console.log(`[github-sync] GET ${url}`);
+
+  const response = await fetch(url, {
     headers: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
@@ -84,13 +87,18 @@ const githubFetch = async <T>(endpoint: string, token: string): Promise<T> => {
   });
 
   if (!response.ok) {
-    throw new Error(`GitHub request failed: ${response.status}`);
+    const body = await response.text().catch(() => "");
+    console.error(`[github-sync] Request failed ${response.status} for ${endpoint}:`, body);
+    throw new Error(`GitHub API ${response.status}: ${endpoint}`);
   }
 
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  console.log(`[github-sync] OK ${endpoint}`);
+  return data;
 };
 
 const githubGraphqlFetch = async <T>(query: string, token: string): Promise<T> => {
+  console.log("[github-sync] GraphQL: contributionCalendar query");
   const response = await fetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {
@@ -102,10 +110,14 @@ const githubGraphqlFetch = async <T>(query: string, token: string): Promise<T> =
   });
 
   if (!response.ok) {
-    throw new Error(`GitHub GraphQL request failed: ${response.status}`);
+    const body = await response.text().catch(() => "");
+    console.error(`[github-sync] GraphQL failed ${response.status}:`, body);
+    throw new Error(`GitHub GraphQL ${response.status}`);
   }
 
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  console.log("[github-sync] GraphQL OK");
+  return data;
 };
 
 const normalizeBars = (counts: number[]): number[] => {
@@ -233,7 +245,8 @@ const getRepoFiles = async (repo: GitHubRepo, accessToken: string): Promise<stri
       .filter((entry) => entry.type === "file" || entry.type === "dir")
       .map((entry) => entry.name)
       .slice(0, 20);
-  } catch {
+  } catch (err) {
+    console.warn(`[github-sync] Failed to fetch files for ${repo.full_name}:`, err);
     return [];
   }
 };
@@ -245,7 +258,7 @@ const fetchUserRepos = async (login: string, accessToken: string): Promise<GitHu
   const loadPages = async (pathFactory: (page: number) => string) => {
     for (let page = 1; page <= 10; page += 1) {
       const batch = await githubFetch<GitHubRepo[]>(pathFactory(page), accessToken);
-      if (!batch.length) break;
+      if (!Array.isArray(batch) || !batch.length) break;
 
       batch.forEach((repo) => {
         if (!seen.has(repo.full_name)) {
@@ -259,16 +272,36 @@ const fetchUserRepos = async (login: string, accessToken: string): Promise<GitHu
   };
 
   try {
+    console.log(`[github-sync] Fetching all repos (private+public) for ${login}`);
     await loadPages(
       (page) =>
         `/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=updated&per_page=100&page=${page}`
     );
-  } catch {
-    // Fallback: still fetch public repositories if the private-repo endpoint fails.
-    await loadPages((page) => `/users/${login}/repos?sort=updated&per_page=100&page=${page}`);
+    console.log(`[github-sync] Fetched ${repos.length} repos (including private)`);
+  } catch (err) {
+    console.warn(`[github-sync] Private repo fetch failed, falling back to public repos:`, err);
+    // Fallback: fetch public repos if the authenticated endpoint fails
+    try {
+      await loadPages((page) => `/users/${encodeURIComponent(login)}/repos?sort=updated&per_page=100&page=${page}`);
+      console.log(`[github-sync] Fallback: fetched ${repos.length} public repos`);
+    } catch (err2) {
+      console.error(`[github-sync] Public repo fallback also failed:`, err2);
+    }
   }
 
   return repos;
+};
+
+// Safely fetch GitHub search count — returns 0 if rate-limited or any error
+const safeSearchCount = async (query: string, token: string): Promise<number> => {
+  try {
+    const encoded = encodeURIComponent(query);
+    const result = await githubFetch<SearchResult>(`/search/issues?q=${encoded}&per_page=1`, token);
+    return result.total_count ?? 0;
+  } catch (err) {
+    console.warn(`[github-sync] Search failed for "${query}":`, err);
+    return 0;
+  }
 };
 
 export const syncGithubInsights = async ({
@@ -284,7 +317,12 @@ export const syncGithubInsights = async ({
   fallbackName?: string | null;
   fallbackEmail?: string | null;
 }): Promise<{ repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles: number }> => {
+  console.log("[github-sync] Starting full GitHub sync for uid:", uid);
+
+  // Step 1: Fetch user profile
   const me = await githubFetch<GitHubUser>("/user", accessToken);
+  console.log("[github-sync] GitHub user:", me.login);
+
   const contributionCalendarQuery = `
     query ViewerCalendar {
       viewer {
@@ -302,24 +340,39 @@ export const syncGithubInsights = async ({
     }
   `;
 
-  const [prsOpened, prsClosed, issuesClosed, reviewActivity, contributionCalendar] = await Promise.all([
-    githubFetch<SearchResult>(`/search/issues?q=author:${me.login}+is:pr`, accessToken).catch(() => ({ total_count: 0 })),
-    githubFetch<SearchResult>(`/search/issues?q=author:${me.login}+is:pr+is:closed`, accessToken).catch(() => ({ total_count: 0 })),
-    githubFetch<SearchResult>(`/search/issues?q=author:${me.login}+is:issue+is:closed`, accessToken).catch(() => ({ total_count: 0 })),
-    githubFetch<SearchResult>(`/search/issues?q=commenter:${me.login}+is:pr`, accessToken).catch(() => ({ total_count: 0 })),
-    githubGraphqlFetch<ContributionCalendarResponse>(contributionCalendarQuery, accessToken).catch(() => ({})),
+  // Step 2: Fetch stats in parallel — all failures are safely caught
+  console.log("[github-sync] Fetching PRs, issues, reviews, and contribution calendar in parallel...");
+  const [prsMergedCount, issuesClosedCount, codeReviewsCount, contributionCalendar] = await Promise.all([
+    safeSearchCount(`author:${me.login} is:pr is:merged`, accessToken),
+    safeSearchCount(`author:${me.login} is:issue is:closed`, accessToken),
+    safeSearchCount(`reviewed-by:${me.login} is:pr`, accessToken),
+    githubGraphqlFetch<ContributionCalendarResponse>(contributionCalendarQuery, accessToken).catch((err) => {
+      console.warn("[github-sync] Contribution calendar GraphQL failed:", err);
+      return {};
+    }),
   ]);
 
+  console.log(`[github-sync] PRs merged: ${prsMergedCount}, Issues closed: ${issuesClosedCount}, Code reviews: ${codeReviewsCount}`);
+
+  // Step 3: Fetch repositories
+  console.log("[github-sync] Fetching user repositories...");
   const repos = await fetchUserRepos(me.login, accessToken);
+  console.log(`[github-sync] Total repos fetched: ${repos.length}`);
 
   const privateCount = repos.filter((repo) => repo.private).length;
   const publicCount = repos.length - privateCount;
+  console.log(`[github-sync] Private: ${privateCount}, Public: ${publicCount}`);
 
+  // Step 4: Build metrics
   const bars = buildMonthlyBars(repos);
   const heatmapWeeks = buildHeatmapWeeks(
-    contributionCalendar.data?.viewer?.contributionsCollection?.contributionCalendar?.weeks
+    (contributionCalendar as ContributionCalendarResponse).data?.viewer?.contributionsCollection?.contributionCalendar?.weeks
   );
+  console.log(`[github-sync] Heatmap weeks: ${heatmapWeeks.length}, Bars: ${bars.length}`);
+
   const languages = buildLanguageDistribution(repos);
+  console.log(`[github-sync] Languages:`, languages.map((l) => `${l.name}(${l.value}%)`).join(", "));
+
   const primaryLanguage = languages[0]?.name ?? "TypeScript";
 
   const repoIntelligence = repos
@@ -339,34 +392,47 @@ export const syncGithubInsights = async ({
     .sort((a, b) => new Date(b.pushed_at).getTime() - new Date(a.pushed_at).getTime())
     .slice(0, 12);
 
+  // Step 5: Fetch repo files (up to 8 repos)
+  console.log(`[github-sync] Fetching file trees for top ${Math.min(reposBase.length, 8)} repos...`);
   const repoFilesList = await Promise.all(
     reposBase.map((repo, idx) => (idx < 8 ? getRepoFiles(repo, accessToken) : Promise.resolve([])))
   );
 
   const reposGlimpse = reposBase.map((repo, idx) => ({
-      name: repo.full_name,
-      url: repo.html_url,
-      isPrivate: repo.private,
-      language: repo.language ?? "Unknown",
-      stars: repo.stargazers_count,
-      updatedAt: repo.pushed_at,
-      files: repoFilesList[idx] ?? [],
-    }));
+    name: repo.full_name,
+    url: repo.html_url,
+    isPrivate: repo.private,
+    language: repo.language ?? "Unknown",
+    stars: repo.stargazers_count,
+    updatedAt: repo.pushed_at,
+    files: repoFilesList[idx] ?? [],
+  }));
+
+  const reposWithFiles = reposGlimpse.filter((r) => r.files.length > 0).length;
+  console.log(`[github-sync] Repos with files fetched: ${reposWithFiles}`);
 
   const contributionStrength = clamp(
     Math.round(
       repos.length * 1.2 +
-        privateCount * 1.5 +
-        prsClosed.total_count * 0.25 +
-        issuesClosed.total_count * 0.15 +
-        repoIntelligence.reduce((acc, repo) => acc + repo.impact, 0)
+      privateCount * 1.5 +
+      prsMergedCount * 0.25 +
+      issuesClosedCount * 0.15 +
+      repoIntelligence.reduce((acc, repo) => acc + repo.impact, 0)
     ),
     15,
     99
   );
 
-  const consistencyScore = clamp(Number((bars.reduce((acc, value) => acc + value, 0) / Math.max(bars.length, 1) / 10).toFixed(1)), 1, 10);
+  const consistencyScore = clamp(
+    Number((bars.reduce((acc, value) => acc + value, 0) / Math.max(bars.length, 1) / 10).toFixed(1)),
+    1,
+    10
+  );
 
+  console.log(`[github-sync] Contribution strength: ${contributionStrength}, Consistency: ${consistencyScore}`);
+
+  // Step 6: Write everything to Firestore
+  console.log("[github-sync] Writing data to Firestore...");
   await Promise.all([
     setDoc(
       doc(firestore, "users", uid, "profile", "main"),
@@ -385,26 +451,28 @@ export const syncGithubInsights = async ({
       doc(firestore, "users", uid, "dashboard", "main"),
       {
         heading: `Welcome back, ${me.name || me.login}`,
-        subheading: `Insights from ${repos.length} repositories, including private activity.`,
+        subheading: `Insights from ${repos.length} repositories (${privateCount} private, ${publicCount} public).`,
         contributionStrength,
         consistencyScore,
         consistencyBars: bars,
         heatmapWeeks,
         collaboration: {
-          prsMerged: prsClosed.total_count,
-          codeReviews: reviewActivity.total_count,
-          issuesClosed: issuesClosed.total_count,
+          prsMerged: prsMergedCount,
+          codeReviews: codeReviewsCount,
+          issuesClosed: issuesClosedCount,
         },
         languages,
-        summary: `Strong ${primaryLanguage}-leaning profile with ${privateCount} private repositories and ${publicCount} public repositories analyzed.`,
+        summary: `${me.name || me.login} has ${repos.length} repositories (${privateCount} private) in ${primaryLanguage} and more. Contribution strength: ${contributionStrength}/100. ${prsMergedCount} PRs merged, ${issuesClosedCount} issues closed.`,
         repoIntelligence,
         repos: reposGlimpse,
         contributionStreak: buildStreak(repos),
         openSourceImpact: [
-          `${prsOpened.total_count} pull requests opened across your repositories.`,
-          `${privateCount} private repositories contribute to your experience profile.`,
-          `${me.followers} followers and ${me.following} following signal active engineering collaboration.`,
+          `${prsMergedCount} pull requests merged across repositories.`,
+          `${privateCount} private repositories contributing to experience depth.`,
+          `${me.followers} followers and ${me.following} following on GitHub.`,
+          ...(codeReviewsCount > 0 ? [`${codeReviewsCount} pull requests reviewed — strong collaboration signal.`] : []),
         ],
+        syncedAt: serverTimestamp(),
       },
       { merge: true }
     ),
@@ -422,10 +490,12 @@ export const syncGithubInsights = async ({
     ),
   ]);
 
+  console.log("[github-sync] ✅ All data written to Firestore successfully.");
+
   return {
     repoCount: repos.length,
     privateRepoCount: privateCount,
     publicRepoCount: publicCount,
-    reposWithFiles: reposGlimpse.filter((repo) => repo.files.length > 0).length,
+    reposWithFiles,
   };
 };
