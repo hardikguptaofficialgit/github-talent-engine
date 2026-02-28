@@ -145,6 +145,78 @@ const logout = async (): Promise<void> => {
   await signOut(auth);
 };
 
+const syncGithubProfileFallback = async ({
+  user,
+  accessToken,
+}: {
+  user: User;
+  accessToken: string;
+}): Promise<{ login: string | null }> => {
+  if (!db) return { login: null };
+
+  try {
+    const response = await fetch("https://api.github.com/user", {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${accessToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+
+    if (!response.ok) {
+      return { login: null };
+    }
+
+    const payload = (await response.json()) as {
+      login?: string;
+      name?: string | null;
+      bio?: string | null;
+      email?: string | null;
+      blog?: string | null;
+      html_url?: string;
+      avatar_url?: string;
+    };
+
+    const login = typeof payload.login === "string" ? payload.login : null;
+    const profileName = payload.name || user.displayName || login || "GitHub User";
+    const profileBio =
+      payload.bio ||
+      `GitHub activity synced. Full insights pending; refresh to load repositories.`;
+
+    await Promise.all([
+      setDoc(
+        doc(db, "users", user.uid, "github", "main"),
+        {
+          login: login ?? "",
+          email: payload.email || user.email || "",
+          avatarUrl: payload.avatar_url ?? user.photoURL ?? "",
+          privateRepoCount: 0,
+          publicRepoCount: 0,
+          syncedAt: serverTimestamp(),
+        },
+        { merge: true }
+      ),
+      setDoc(
+        doc(db, "users", user.uid, "profile", "main"),
+        {
+          name: profileName,
+          headline: "GitHub Developer",
+          bio: profileBio,
+          links: [
+            ...(payload.html_url ? [{ label: "GitHub", url: payload.html_url }] : []),
+            ...(payload.blog ? [{ label: "Portfolio", url: payload.blog }] : []),
+          ],
+        },
+        { merge: true }
+      ),
+    ]);
+
+    return { login };
+  } catch {
+    return { login: null };
+  }
+};
+
 const subscribeAuth = (callback: (user: User | null) => void): (() => void) => {
   if (!auth) {
     callback(null);
@@ -160,6 +232,7 @@ export {
   loginWithGithub,
   refreshGithubInsights,
   syncGithubInsightsWithToken,
+  syncGithubProfileFallback,
   getStoredGithubToken,
   clearStoredGithubToken,
   logout,

@@ -4,7 +4,12 @@ import Navbar from "@/components/Layout/Navbar";
 import { getDashboardData, getJobsData, getRecommendedJobsForUser } from "@/lib/app-data";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "@/hooks/use-toast";
-import { getStoredGithubToken, refreshGithubInsights, syncGithubInsightsWithToken, clearStoredGithubToken } from "@/lib/firebase";
+import {
+  getStoredGithubToken,
+  syncGithubInsightsWithToken,
+  syncGithubProfileFallback,
+  clearStoredGithubToken,
+} from "@/lib/firebase";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const Dashboard = () => {
@@ -132,11 +137,15 @@ const Dashboard = () => {
           description: `${sync.repoCount} repositories analyzed.`,
         });
       })
-      .catch(() => {
+      .catch(async () => {
+        await syncGithubProfileFallback({ user, accessToken: token });
+        if (user?.uid) {
+          queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
+        }
         clearStoredGithubToken();
         toast({
           title: "GitHub sync failed",
-          description: "Please re-authorize GitHub access to sync insights.",
+          description: "Loaded basic profile data. Re-authorize GitHub to sync full insights.",
         });
       });
   }, [user, hasInsights, queryClient]);
@@ -158,7 +167,14 @@ const Dashboard = () => {
   const handleResync = async () => {
     try {
       const token = user ? getStoredGithubToken() : null;
-      const sync = token && user ? await syncGithubInsightsWithToken({ user, accessToken: token }) : await refreshGithubInsights();
+      if (!token || !user) {
+        toast({
+          title: "Re-auth required",
+          description: "Please sign in with GitHub again to refresh insights.",
+        });
+        return;
+      }
+      const sync = await syncGithubInsightsWithToken({ user, accessToken: token });
       if (user?.uid) {
         await queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
       }
