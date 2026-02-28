@@ -145,8 +145,6 @@ const FEATURED_JOBS: JobItem[] = [
 ];
 
 const DEMO_UID = "demo-user";
-const DEMO_PROFILE_KEY = "opensourcehire.demo.profile";
-const DEMO_APPLICATIONS_KEY = "opensourcehire.demo.applications";
 
 const DEMO_DASHBOARD: DashboardData = {
   heading: "Welcome back, Hardik",
@@ -574,6 +572,7 @@ export const getRecommendedJobsForUser = async (uid: string): Promise<JobItem[]>
 };
 
 export const getApplicationsData = async (uid: string): Promise<ApplicationItem[]> => {
+  if (uid === DEMO_UID) return DEMO_APPLICATIONS;
   if (!hasFirebaseConfig || !db || !uid) return [];
 
   try {
@@ -627,6 +626,7 @@ export const updateApplicationStatus = async (uid: string, applicationId: string
 };
 
 export const getProfileData = async (uid: string): Promise<ProfileData | null> => {
+  if (uid === DEMO_UID) return DEMO_PROFILE;
   if (!hasFirebaseConfig || !db || !uid) return null;
 
   try {
