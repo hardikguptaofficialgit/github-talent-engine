@@ -270,7 +270,7 @@ const Jobs = () => {
                       </div>
 
                       <div className="space-y-3">
-                        <div className="rounded-xl border border-[#ff7a00]/40 bg-[#2a1406] py-4 text-center font-semibold text-[#ff9b3d]">
+                        <div className="rounded-xl border border-[#ff7a00]/40  py-4 text-center font-semibold text-[#ff9b3d]">
                           {job.match}% Match
                         </div>
                         <div className="rounded-xl border border-white/10 bg-black/25 p-4 min-h-[130px]">

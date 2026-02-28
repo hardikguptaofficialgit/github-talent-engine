@@ -8,7 +8,7 @@ import { toast } from "@/hooks/use-toast";
 const landing = {
   contributionScore: 94,
   contributionCount: 1823,
-  topRepoName: "hardi/talent-engine",
+  topRepoName: "hardikgit/talent-engine",
   topRepoStats: "214 commits - 37 PRs merged",
   topRepoTags: ["TypeScript", "Firebase", "React", "Node.js"],
   roleMatch: 91,
@@ -124,31 +124,36 @@ const Index = () => {
               </div>
 
               {/* Heatmap Grid */}
-              <div className="overflow-x-auto pb-2 custom-scrollbar">
-                <div className="flex gap-[3px] min-w-max pt-2">
-                  {Array.from({ length: 52 }).map((_, weekIdx) => (
-                    <div key={weekIdx} className="flex flex-col gap-[3px]">
-                      {Array.from({ length: 7 }).map((_, dayIdx) => {
-                        const isActive = Math.random() > 0.35;
-                        const intensity = isActive ? Math.floor(Math.random() * 4) + 1 : 0;
-                        const colors = [
-                          'bg-[#161b22]', // 0
-                          'bg-[#0e4429]', // 1
-                          'bg-[#006d32]', // 2
-                          'bg-[#26a641]', // 3
-                          'bg-[#39d353]'  // 4
-                        ];
-                        return (
-                          <div 
-                            key={dayIdx} 
-                            className={`w-[11px] h-[11px] rounded-[2px] ${colors[intensity]} outline outline-1 outline-white/5`} 
-                          />
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-              </div>
+           <div className="overflow-x-auto pb-3 custom-scrollbar">
+  <div className="flex gap-[4px] min-w-max pt-2">
+    {Array.from({ length: 52 }).map((_, weekIdx) => (
+      <div key={weekIdx} className="flex flex-col gap-[4px]">
+        {Array.from({ length: 7 }).map((_, dayIdx) => {
+          const isActive = Math.random() > 0.35;
+          const intensity = isActive
+            ? Math.floor(Math.random() * 4) + 1
+            : 0;
+
+          // Black → White grayscale scale
+          const colors = [
+            "bg-[#0f0f12]", // 0 - no activity
+            "bg-[#2a2a2e]", // 1 - low
+            "bg-[#44444a]", // 2 - medium
+            "bg-[#6b6b73]", // 3 - high
+            "bg-[#e5e5e5]", // 4 - max
+          ];
+
+          return (
+            <div
+              key={dayIdx}
+              className={`w-[12px] h-[12px] rounded-[3px] ${colors[intensity]} border border-white/5 transition-all duration-200 hover:scale-110`}
+            />
+          );
+        })}
+      </div>
+    ))}
+  </div>
+</div>
 
               {/* Heatmap Footer Legend */}
               <div className="mt-3 flex justify-between items-center text-[11px] text-[#8b949e]">

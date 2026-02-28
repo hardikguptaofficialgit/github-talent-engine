@@ -18,7 +18,7 @@ const dashboardLinks = [
 
 const Navbar = () => {
   const location = useLocation();
-  const { user, loading, login, signOutUser } = useAuth();
+  const { user, loading, login, loginDemo, signOutUser } = useAuth();
   
   // Dropdown states
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -73,6 +73,23 @@ const Navbar = () => {
   const handleSignOut = async () => {
     setIsProfileOpen(false);
     await signOutUser();
+  };
+
+  const handleDemoLogin = async () => {
+    try {
+      const demoUser = await loginDemo();
+      if (!demoUser) {
+        toast({
+          title: "Demo unavailable",
+          description: "Please try again in a few seconds.",
+        });
+      }
+    } catch {
+      toast({
+        title: "Demo sign-in failed",
+        description: "Please try again.",
+      });
+    }
   };
 
   return (
@@ -193,12 +210,20 @@ const Navbar = () => {
               )}
             </div>
           ) : (
-            <button
-              onClick={handleLogin}
-              className="h-9 rounded-full bg-[#ff7a00] px-4 text-xs font-semibold text-black flex items-center justify-center gap-2 hover:bg-[#ff7a00]/90 transition-colors"
-            >
-              <span>Sign in with</span> <Github className="h-4 w-4" />
-            </button>
+            <>
+              <button
+                onClick={handleDemoLogin}
+                className="h-9 rounded-full border border-white/20 bg-white/5 px-4 text-xs font-semibold text-white hover:bg-white/10 transition-colors"
+              >
+                Try Demo
+              </button>
+              <button
+                onClick={handleLogin}
+                className="h-9 rounded-full bg-[#ff7a00] px-4 text-xs font-semibold text-black flex items-center justify-center gap-2 hover:bg-[#ff7a00]/90 transition-colors"
+              >
+                <span>Sign in with</span> <Github className="h-4 w-4" />
+              </button>
+            </>
           )}
         </div>
       </div>

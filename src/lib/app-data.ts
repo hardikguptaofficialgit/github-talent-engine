@@ -144,6 +144,124 @@ const FEATURED_JOBS: JobItem[] = [
   },
 ];
 
+const DEMO_UID = "demo-user";
+const DEMO_PROFILE_KEY = "opensourcehire.demo.profile";
+const DEMO_APPLICATIONS_KEY = "opensourcehire.demo.applications";
+
+const DEMO_DASHBOARD: DashboardData = {
+  heading: "Welcome back, Aarav",
+  subheading: "Live demo data from a full-stack GitHub profile and role trends.",
+  contributionStrength: 86,
+  consistencyScore: 8.4,
+  consistencyBars: [48, 62, 59, 73, 66, 77, 69, 88, 71, 82, 76, 91],
+  heatmapWeeks: Array.from({ length: 52 }, (_, week) =>
+    Array.from({ length: 7 }, (_, day) => ((week + day) % 5 === 0 ? 4 : ((week * day + 2) % 4) + 1))
+  ),
+  collaboration: { prsMerged: 41, codeReviews: 29, issuesClosed: 18 },
+  languages: [
+    { name: "TypeScript", value: 34 },
+    { name: "Python", value: 22 },
+    { name: "Go", value: 16 },
+    { name: "Dockerfile", value: 14 },
+    { name: "SQL", value: 14 },
+  ],
+  summary:
+    "Aarav ships consistently across frontend and backend repositories, with strong collaboration and pragmatic delivery velocity.",
+  repoIntelligence: [
+    { name: "aarav-sharma/job-radar", impact: 9.4 },
+    { name: "aarav-sharma/gh-analytics-engine", impact: 8.8 },
+    { name: "aarav-sharma/interview-tracker-pro", impact: 8.2 },
+  ],
+  repos: [
+    {
+      name: "aarav-sharma/job-radar",
+      url: "https://github.com/aarav-sharma/job-radar",
+      isPrivate: false,
+      language: "TypeScript",
+      stars: 31,
+      updatedAt: "2026-02-24T09:22:00Z",
+      files: ["src/app/dashboard.tsx", "src/lib/trends.ts", "src/components/fit-score-card.tsx", "README.md", "package.json"],
+    },
+    {
+      name: "aarav-sharma/gh-analytics-engine",
+      url: "https://github.com/aarav-sharma/gh-analytics-engine",
+      isPrivate: true,
+      language: "Python",
+      stars: 12,
+      updatedAt: "2026-02-21T14:05:00Z",
+      files: ["engine/collector.py", "engine/scoring.py", "engine/heatmap.py", "tests/test_scoring.py", "pyproject.toml"],
+    },
+    {
+      name: "aarav-sharma/interview-tracker-pro",
+      url: "https://github.com/aarav-sharma/interview-tracker-pro",
+      isPrivate: false,
+      language: "Go",
+      stars: 22,
+      updatedAt: "2026-02-17T11:41:00Z",
+      files: ["cmd/server/main.go", "internal/applications/service.go", "internal/jobs/repository.go", "web/src/pages/board.tsx", "README.md"],
+    },
+  ],
+  contributionStreak: 17,
+  openSourceImpact: [
+    "53 pull requests opened across active repositories in the last 12 months.",
+    "Reviewed 29 pull requests with architecture and test-depth feedback.",
+    "Maintains 3 production-style projects with clear documentation and CI pipelines.",
+  ],
+};
+
+const DEMO_PROFILE: ProfileData = {
+  name: "Aarav Sharma",
+  headline: "Full-Stack Engineer | TypeScript, Python, Go",
+  bio: "I build developer-focused products and workflow automation with strong UX, testing, and scalable backend design.",
+  links: [
+    { label: "GitHub", url: "https://github.com/aarav-sharma" },
+    { label: "Portfolio", url: "https://aarav-sharma.dev" },
+    { label: "LinkedIn", url: "https://www.linkedin.com/in/aarav-sharma-dev/" },
+  ],
+};
+
+const DEMO_APPLICATIONS: ApplicationItem[] = [
+  {
+    id: "demo-app-1",
+    jobId: "featured-vercel-platform-intern",
+    status: "Interview",
+    company: "Vercel",
+    role: "Software Engineer Intern, Platform",
+    location: "San Francisco, CA (Remote)",
+    match: 94,
+    tags: ["TypeScript", "React", "DX"],
+    foot: "Interview stage",
+    applicantName: "Aarav Sharma",
+    applicantEmail: "aarav.demo@opensourcehire.dev",
+  },
+  {
+    id: "demo-app-2",
+    jobId: "featured-stripe-backend-intern",
+    status: "Applied",
+    company: "Stripe",
+    role: "Backend Engineering Intern",
+    location: "Seattle, WA (Hybrid)",
+    match: 90,
+    tags: ["Go", "API Design", "PostgreSQL"],
+    foot: "Application submitted",
+    applicantName: "Aarav Sharma",
+    applicantEmail: "aarav.demo@opensourcehire.dev",
+  },
+  {
+    id: "demo-app-3",
+    jobId: "featured-cloudflare-swe-intern",
+    status: "Saved",
+    company: "Cloudflare",
+    role: "Software Engineering Intern, Edge",
+    location: "Austin, TX (Hybrid)",
+    match: 88,
+    tags: ["Rust", "Networking", "Reliability"],
+    foot: "Saved for later",
+    applicantName: "Aarav Sharma",
+    applicantEmail: "aarav.demo@opensourcehire.dev",
+  },
+];
+
 const asStringArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
@@ -353,6 +471,9 @@ const normalizeApplication = (id: string, data: Record<string, unknown>): Applic
 };
 
 export const getDashboardData = async (uid: string): Promise<DashboardData> => {
+  if (uid === DEMO_UID) {
+    return DEMO_DASHBOARD;
+  }
   if (!hasFirebaseConfig || !db || !uid) return EMPTY_DASHBOARD;
 
   try {
