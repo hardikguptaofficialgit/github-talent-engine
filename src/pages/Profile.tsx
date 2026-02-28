@@ -1,63 +1,186 @@
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Navbar from "@/components/Layout/Navbar";
-import { motion } from "framer-motion";
-import { Github, ExternalLink, GitFork, Star, Eye } from "lucide-react";
-import GitHubHeatmap from "@/components/Landing/GitHubHeatmap";
+import { ProfileData, getProfileData, updateProfileData } from "@/lib/app-data";
+import { useAuth } from "@/hooks/use-auth";
+import { toast } from "@/hooks/use-toast";
 
-const repos = [
-  { name: "react-query-devtools", desc: "Custom DevTools extension for React Query with real-time cache inspection.", stars: 128, forks: 23, lang: "TypeScript", updated: "2d ago" },
-  { name: "git-streak-cli", desc: "CLI tool to visualize your GitHub contribution streaks.", stars: 89, forks: 12, lang: "Go", updated: "1w ago" },
-  { name: "markdown-ai", desc: "AI-powered markdown editor with intelligent suggestions.", stars: 64, forks: 8, lang: "TypeScript", updated: "3w ago" },
-  { name: "oss-tracker", desc: "Track your open-source contributions and generate reports.", stars: 42, forks: 6, lang: "Python", updated: "1mo ago" },
-];
+const emptyProfile: ProfileData = {
+  name: "",
+  headline: "",
+  bio: "",
+  links: [],
+};
 
 const Profile = () => {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<ProfileData>(emptyProfile);
+
+  const { data } = useQuery({
+    queryKey: ["profile-data", user?.uid],
+    queryFn: () => getProfileData(user?.uid ?? ""),
+    enabled: !!user?.uid,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  useEffect(() => {
+    if (!user) return;
+    setForm({
+      name: data?.name || user.displayName || "",
+      headline: data?.headline || "",
+      bio: data?.bio || "",
+      links: data?.links?.length
+        ? data.links
+        : [
+            { label: "GitHub", url: "" },
+            { label: "Portfolio", url: "" },
+            { label: "LinkedIn", url: "" },
+          ],
+    });
+  }, [data, user]);
+
+  const updateLink = (index: number, key: "label" | "url", value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      links: prev.links.map((link, i) => (i === index ? { ...link, [key]: value } : link)),
+    }));
+  };
+
+  const addLink = () => {
+    setForm((prev) => ({
+      ...prev,
+      links: [...prev.links, { label: "", url: "" }],
+    }));
+  };
+
+  const removeLink = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      links: prev.links.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleSave = async () => {
+    if (!user?.uid) return;
+
+    if (!form.name.trim()) {
+      toast({ title: "Name required", description: "Please add your display name." });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await updateProfileData(user.uid, form);
+      await queryClient.invalidateQueries({ queryKey: ["profile-data", user.uid] });
+      setIsEditing(false);
+      toast({ title: "Profile updated", description: "Your profile changes were saved." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen">
+    <div className="app-bg min-h-screen text-white pb-10">
       <Navbar />
-      <main className="container mx-auto px-4 pt-24 pb-16 max-w-4xl">
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="glass-card-glow p-8 mb-8 text-center">
-          <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center text-3xl font-bold text-primary mx-auto mb-4">
-            AK
-          </div>
-          <h1 className="text-2xl font-bold mb-1">Alex Kovalev</h1>
-          <p className="text-muted-foreground text-sm mb-4">@alexkovalev · Full-Stack Developer · MIT '27</p>
-          <div className="flex items-center justify-center gap-6 text-sm text-muted-foreground">
-            <span><strong className="text-foreground">1,247</strong> contributions</span>
-            <span><strong className="text-foreground">89</strong> PRs merged</span>
-            <span><strong className="text-foreground">342</strong> stars</span>
-          </div>
-        </motion.div>
-
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }} className="clay-card p-6 mb-8">
-          <h3 className="font-semibold mb-4 text-sm">Activity</h3>
-          <div className="overflow-x-auto pb-1">
-            <GitHubHeatmap interactive />
-          </div>
-        </motion.div>
-
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
-          <h3 className="font-semibold mb-4">Top Repositories</h3>
-          <div className="grid md:grid-cols-2 gap-4">
-            {repos.map((repo) => (
-              <div key={repo.name} className="clay-card p-5 group">
-                <div className="flex items-start justify-between mb-2">
-                  <h4 className="font-semibold text-sm flex items-center gap-1.5">
-                    <Github className="w-3.5 h-3.5 text-primary" />
-                    {repo.name}
-                  </h4>
-                  <ExternalLink className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+      <main className="px-4 md:px-8 pt-6">
+        <div className="mx-auto max-w-[900px] app-panel rounded-2xl p-8">
+          {!user ? (
+            <p className="text-white/70">Sign in to view your profile and links.</p>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-3 mb-5">
+                <div>
+                  <h1 className="text-4xl font-bold">{isEditing ? "Edit Profile" : form.name || "Profile"}</h1>
+                  {!isEditing && <p className="mt-2 text-white/70">{form.headline || ""}</p>}
                 </div>
-                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{repo.desc}</p>
-                <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <span className="match-badge">{repo.lang}</span>
-                  <span className="flex items-center gap-1"><Star className="w-3 h-3" />{repo.stars}</span>
-                  <span className="flex items-center gap-1"><GitFork className="w-3 h-3" />{repo.forks}</span>
-                  <span className="ml-auto flex items-center gap-1"><Eye className="w-3 h-3" />{repo.updated}</span>
+                <div className="flex gap-2">
+                  {isEditing ? (
+                    <>
+                      <button onClick={() => setIsEditing(false)} className="app-btn-secondary" disabled={saving}>Cancel</button>
+                      <button onClick={handleSave} className="app-btn-primary" disabled={saving}>{saving ? "Saving..." : "Save"}</button>
+                    </>
+                  ) : (
+                    <button onClick={() => setIsEditing(true)} className="app-btn-primary">Edit Profile</button>
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
-        </motion.div>
+
+              {isEditing ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-white/50 mb-1">Name</p>
+                      <input
+                        value={form.name}
+                        onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                        className="h-10 w-full rounded-xl border border-white/15 bg-black/20 px-3 text-sm outline-none"
+                      />
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-white/50 mb-1">Headline</p>
+                      <input
+                        value={form.headline}
+                        onChange={(event) => setForm((prev) => ({ ...prev, headline: event.target.value }))}
+                        className="h-10 w-full rounded-xl border border-white/15 bg-black/20 px-3 text-sm outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-white/50 mb-1">Bio</p>
+                    <textarea
+                      value={form.bio}
+                      onChange={(event) => setForm((prev) => ({ ...prev, bio: event.target.value }))}
+                      className="min-h-24 w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs uppercase tracking-wider text-white/50">Links</p>
+                      <button onClick={addLink} className="text-xs text-white/70 hover:text-white">Add link</button>
+                    </div>
+                    <div className="space-y-2">
+                      {form.links.map((link, index) => (
+                        <div key={`${index}-${link.label}`} className="grid gap-2 md:grid-cols-[140px_1fr_auto]">
+                          <input
+                            value={link.label}
+                            onChange={(event) => updateLink(index, "label", event.target.value)}
+                            placeholder="Label"
+                            className="h-10 rounded-xl border border-white/15 bg-black/20 px-3 text-sm outline-none"
+                          />
+                          <input
+                            value={link.url}
+                            onChange={(event) => updateLink(index, "url", event.target.value)}
+                            placeholder="https://..."
+                            className="h-10 rounded-xl border border-white/15 bg-black/20 px-3 text-sm outline-none"
+                          />
+                          <button onClick={() => removeLink(index)} className="app-btn-secondary h-10">Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-4 text-white/60">{form.bio || ""}</p>
+                  <div className="mt-6 flex gap-3 flex-wrap">
+                    {(form.links ?? [])
+                      .filter((link) => link.url)
+                      .map((link) => (
+                        <a key={link.url} href={link.url} target="_blank" rel="noreferrer" className="app-btn-secondary">
+                          {link.label}
+                        </a>
+                      ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
       </main>
     </div>
   );

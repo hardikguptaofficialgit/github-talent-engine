@@ -1,30 +1,43 @@
 import { useMemo } from "react";
 
-const GitHubHeatmap = ({ interactive = false }: { interactive?: boolean }) => {
-  const weeks = 52;
+type GitHubHeatmapProps = {
+  interactive?: boolean;
+  className?: string;
+  weeksData?: number[][];
+};
+
+const GitHubHeatmap = ({ interactive = false, className = "", weeksData }: GitHubHeatmapProps) => {
+  const weeks = 44;
   const days = 7;
 
   const data = useMemo(() => {
-    return Array.from({ length: weeks }, () =>
-      Array.from({ length: days }, () => {
-        const r = Math.random();
-        if (r < 0.3) return 0;
-        if (r < 0.55) return 1;
-        if (r < 0.75) return 2;
-        if (r < 0.9) return 3;
+    if (weeksData?.length) {
+      return weeksData.map((week) => week.slice(0, days));
+    }
+
+    const rows = Array.from({ length: weeks }, (_, w) =>
+      Array.from({ length: days }, (_, d) => {
+        const wave = Math.sin((w / weeks) * Math.PI * 8 + d * 0.75);
+        const intensity = Math.max(0, wave + 0.35);
+        if (intensity < 0.2) return 0;
+        if (intensity < 0.45) return 1;
+        if (intensity < 0.65) return 2;
+        if (intensity < 0.85) return 3;
         return 4;
       })
     );
-  }, []);
+
+    return rows;
+  }, [weeksData]);
 
   return (
-    <div className="flex gap-[3px]">
+    <div className={`w-max flex gap-[4px] ${className}`}>
       {data.map((week, wi) => (
-        <div key={wi} className="flex flex-col gap-[3px]">
+        <div key={wi} className="flex flex-col gap-[4px]">
           {week.map((level, di) => (
             <div
               key={di}
-              className={`w-[10px] h-[10px] heatmap-cell heatmap-${level} ${
+              className={`w-[9px] h-[9px] rounded-[2px] heatmap-${level} ${
                 interactive ? "cursor-crosshair" : ""
               }`}
             />
