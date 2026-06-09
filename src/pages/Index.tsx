@@ -177,7 +177,7 @@ const Index = () => {
               </div>
             </div>
 
-            {/* Mobile Fallback Stats */}
+            {/* Mobile stats */}
             <div className="mt-6 grid gap-3 md:hidden">
               <div className="rounded-xl p-4 text-left">
                 <p className="text-[10px] tracking-wider text-white/50">CONTRIBUTION SCORE</p>

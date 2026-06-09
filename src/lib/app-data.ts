@@ -262,14 +262,14 @@ const DEMO_APPLICATIONS: ApplicationItem[] = [
   },
 ];
 
-const readDemoJson = <T,>(key: string, fallback: T): T => {
-  if (typeof window === "undefined") return fallback;
+const readDemoJson = <T,>(key: string, defaultValue: T): T => {
+  if (typeof window === "undefined") return defaultValue;
 
   try {
     const value = window.localStorage.getItem(key);
-    return value ? (JSON.parse(value) as T) : fallback;
+    return value ? (JSON.parse(value) as T) : defaultValue;
   } catch {
-    return fallback;
+    return defaultValue;
   }
 };
 
@@ -300,25 +300,6 @@ const asNumberMatrix = (value: unknown): number[][] => {
 };
 
 type RepoPreview = DashboardData["repos"][number];
-type RepoFetchDetail = {
-  default_branch?: string;
-};
-type GitHubPublicRepo = {
-  full_name: string;
-  html_url: string;
-  private: boolean;
-  language: string | null;
-  stargazers_count: number;
-  pushed_at: string;
-  default_branch: string;
-};
-
-type GitHubPublicContent = {
-  path?: string;
-  name?: string;
-  type?: "file" | "dir" | "submodule";
-};
-
 const toStringIfPresent = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
 
 const toNumberIfPresent = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -386,94 +367,6 @@ const normalizeRepo = (value: unknown): RepoPreview | null => {
   };
 };
 
-const fetchPublicRepoFiles = async (fullName: string, defaultBranch?: string): Promise<string[]> => {
-  try {
-    const [owner, repo] = fullName.split("/");
-    if (!owner || !repo) return [];
-    const refParam = defaultBranch ? `?ref=${encodeURIComponent(defaultBranch)}` : "";
-    const response = await fetch(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents${refParam}`
-    );
-    if (!response.ok) return [];
-    const payload = (await response.json()) as unknown;
-    if (!Array.isArray(payload)) return [];
-    return payload
-      .filter((entry): entry is GitHubPublicContent => !!entry && typeof entry === "object")
-      .filter((entry) => entry.type === "file" || entry.type === "dir")
-      .map((entry) => toStringIfPresent(entry.path) ?? toStringIfPresent(entry.name))
-      .filter((file): file is string => typeof file === "string")
-      .slice(0, 20);
-  } catch {
-    return [];
-  }
-};
-
-const fetchRepoDefaultBranch = async (fullName: string): Promise<string | undefined> => {
-  try {
-    const [owner, repo] = fullName.split("/");
-    if (!owner || !repo) return undefined;
-    const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`);
-    if (!response.ok) return undefined;
-    const payload = (await response.json()) as RepoFetchDetail;
-    return typeof payload.default_branch === "string" ? payload.default_branch : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const enrichRepoFilePreviews = async (repos: RepoPreview[]): Promise<RepoPreview[]> => {
-  const fileLists = await Promise.all(
-    repos.map(async (repo, index) => {
-      if (repo.files.length || repo.isPrivate || index >= 8) return repo.files;
-      const branch = await fetchRepoDefaultBranch(repo.name);
-      return fetchPublicRepoFiles(repo.name, branch);
-    })
-  );
-
-  return repos.map((repo, index) => ({
-    ...repo,
-    files: fileLists[index] ?? repo.files,
-  }));
-};
-
-const fetchPublicRepoFallback = async (uid: string): Promise<RepoPreview[]> => {
-  if (!db) return [];
-  try {
-    const githubSnap = await getDoc(doc(db, "users", uid, "github", "main"));
-    const githubData = githubSnap.exists() ? (githubSnap.data() as Record<string, unknown>) : null;
-    const login = githubData && typeof githubData.login === "string" ? githubData.login : "";
-    if (!login) return [];
-
-    const reposResponse = await fetch(
-      `https://api.github.com/users/${encodeURIComponent(login)}/repos?sort=updated&per_page=12`
-    );
-    if (!reposResponse.ok) return [];
-    const reposPayload = (await reposResponse.json()) as unknown;
-    if (!Array.isArray(reposPayload)) return [];
-
-    const repos = reposPayload
-      .filter((repo): repo is GitHubPublicRepo => !!repo && typeof repo === "object" && typeof (repo as GitHubPublicRepo).full_name === "string")
-      .sort((a, b) => new Date(b.pushed_at).getTime() - new Date(a.pushed_at).getTime())
-      .slice(0, 12);
-
-    const filesByRepo = await Promise.all(
-      repos.map((repo, index) => (index < 6 ? fetchPublicRepoFiles(repo.full_name, repo.default_branch || "main") : Promise.resolve([])))
-    );
-
-    return repos.map((repo, index) => ({
-      name: repo.full_name,
-      url: repo.html_url,
-      isPrivate: !!repo.private,
-      language: repo.language ?? "Unknown",
-      stars: typeof repo.stargazers_count === "number" ? repo.stargazers_count : 0,
-      updatedAt: repo.pushed_at ?? "",
-      files: filesByRepo[index] ?? [],
-    }));
-  } catch {
-    return [];
-  }
-};
-
 const normalizeJob = (id: string, data: Partial<JobItem>): JobItem => {
   const match = typeof data.match === "number" ? data.match : 0;
   return {
@@ -531,13 +424,7 @@ export const getDashboardData = async (uid: string): Promise<DashboardData> => {
   try {
     const snap = await getDoc(doc(db, "users", uid, "dashboard", "main"));
     if (!snap.exists()) {
-      const repos = await fetchPublicRepoFallback(uid);
-      if (!repos.length) return EMPTY_DASHBOARD;
-      return {
-        ...EMPTY_DASHBOARD,
-        subheading: `Loaded ${repos.length} recent public repositories from GitHub.`,
-        repos,
-      };
+      return EMPTY_DASHBOARD;
     }
 
     const remote = snap.data() as Partial<DashboardData>;
@@ -551,22 +438,34 @@ export const getDashboardData = async (uid: string): Promise<DashboardData> => {
       .map(normalizeRepo)
       .filter((repo): repo is RepoPreview => !!repo);
 
-    const repos = await enrichRepoFilePreviews(
-      normalizedRepos.length ? normalizedRepos : await fetchPublicRepoFallback(uid)
-    );
+    const repos = normalizedRepos;
+
+    const consistencyBars = asNumberArray(remote.consistencyBars);
+    const heatmapWeeks = asNumberMatrix(remote.heatmapWeeks);
+    const collaboration = {
+      prsMerged: typeof remote.collaboration?.prsMerged === "number" ? remote.collaboration.prsMerged : 0,
+      codeReviews: typeof remote.collaboration?.codeReviews === "number" ? remote.collaboration.codeReviews : 0,
+      issuesClosed: typeof remote.collaboration?.issuesClosed === "number" ? remote.collaboration.issuesClosed : 0,
+    };
+    const reposWithFilePreviews = repos.filter((repo) => repo.files.length > 0).length;
+    const hasCompleteSync = consistencyBars.length > 0 && heatmapWeeks.length > 0;
+
+    if (!hasCompleteSync) {
+      return {
+        ...EMPTY_DASHBOARD,
+        heading: remote.heading ?? EMPTY_DASHBOARD.heading,
+        subheading: "No complete GitHub insight sync found. Click Refresh insights to sync dashboard metrics and repository files.",
+      };
+    }
 
     return {
       heading: remote.heading ?? EMPTY_DASHBOARD.heading,
       subheading: remote.subheading ?? EMPTY_DASHBOARD.subheading,
       contributionStrength: typeof remote.contributionStrength === "number" ? remote.contributionStrength : 0,
       consistencyScore: typeof remote.consistencyScore === "number" ? remote.consistencyScore : 0,
-      consistencyBars: asNumberArray(remote.consistencyBars),
-      heatmapWeeks: asNumberMatrix(remote.heatmapWeeks),
-      collaboration: {
-        prsMerged: typeof remote.collaboration?.prsMerged === "number" ? remote.collaboration.prsMerged : 0,
-        codeReviews: typeof remote.collaboration?.codeReviews === "number" ? remote.collaboration.codeReviews : 0,
-        issuesClosed: typeof remote.collaboration?.issuesClosed === "number" ? remote.collaboration.issuesClosed : 0,
-      },
+      consistencyBars,
+      heatmapWeeks,
+      collaboration,
       languages: Array.isArray(remote.languages)
         ? remote.languages.filter(
             (lang): lang is { name: string; value: number } =>
@@ -580,7 +479,7 @@ export const getDashboardData = async (uid: string): Promise<DashboardData> => {
               !!repo && typeof repo.name === "string" && typeof repo.impact === "number"
           )
         : [],
-      repos,
+      repos: reposWithFilePreviews > 0 ? repos : [],
       contributionStreak: typeof remote.contributionStreak === "number" ? remote.contributionStreak : 0,
       openSourceImpact: asStringArray(remote.openSourceImpact),
     };

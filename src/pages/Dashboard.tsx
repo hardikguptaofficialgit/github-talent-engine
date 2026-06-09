@@ -8,9 +8,8 @@ import {
   getStoredGithubToken,
   refreshGithubInsights,
   syncGithubInsightsWithToken,
-  syncGithubProfileFallback,
   clearStoredGithubToken,
-  hasGithubFallbackToken,
+  hasConfiguredGithubToken,
 } from "@/lib/firebase";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -19,7 +18,7 @@ const Dashboard = () => {
   const queryClient = useQueryClient();
   const [selectedRepo, setSelectedRepo] = useState<string>("");
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncNotice, setSyncNotice] = useState<{ kind: "success" | "warning" | "error"; message: string } | null>(null);
+  const [syncNotice, setSyncNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const autoSyncRef = useRef(false);
 
   const { data, refetch, isLoading } = useQuery({
@@ -48,11 +47,9 @@ const Dashboard = () => {
   const languageSet = new Set(languages.map((lang) => lang.name.toLowerCase()));
   const collaboration = data?.collaboration ?? { prsMerged: 0, codeReviews: 0, issuesClosed: 0 };
   const collaborationTotal = collaboration.prsMerged + collaboration.codeReviews + collaboration.issuesClosed;
-  const hasFilePreviews = repos.some((repo) => repo.files.length > 0);
   const hasConsistencyMetrics = bars.length > 0 && (data?.consistencyScore ?? 0) > 0;
   const hasHeatmapMetrics = (data?.heatmapWeeks?.length ?? 0) > 0;
   const hasFullGithubMetrics = hasConsistencyMetrics || hasHeatmapMetrics || collaborationTotal > 0;
-  const isPartialDashboard = repos.length > 0 && !hasFullGithubMetrics;
   const topRoles = [...jobRecommendations]
     .sort((a, b) => b.match - a.match)
     .slice(0, 3)
@@ -118,11 +115,11 @@ const Dashboard = () => {
     (data?.languages?.length ?? 0) > 0 ||
     (data?.contributionStrength ?? 0) > 0;
 
-  // ✅ useEffect MUST be before any conditional return (Rules of Hooks)
+  // Keep hooks before conditional returns.
   useEffect(() => {
-    if (!user || autoSyncRef.current || hasInsights || isLoading) return;
+    if (!user || autoSyncRef.current || hasFullGithubMetrics || isLoading) return;
     const token = getStoredGithubToken();
-    if (!token && !hasGithubFallbackToken) return;
+    if (!token && !hasConfiguredGithubToken) return;
 
     autoSyncRef.current = true;
     syncGithubInsightsWithToken({ user, accessToken: token ?? "" })
@@ -139,11 +136,7 @@ const Dashboard = () => {
           message: `${sync.repoCount} repositories analyzed with full GitHub insight sync.`,
         });
       })
-      .catch(async (error) => {
-        const token2 = getStoredGithubToken();
-        if (token2) {
-          await syncGithubProfileFallback({ user, accessToken: token2 });
-        }
+      .catch((error) => {
         if (user?.uid) {
           queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
         }
@@ -153,16 +146,16 @@ const Dashboard = () => {
         }
         toast({
           title: "GitHub sync failed",
-          description: "Loaded basic profile data. Re-authorize GitHub to sync full insights.",
+          description: "Full GitHub sync failed. Check GitHub token scopes and try again.",
         });
         setSyncNotice({
-          kind: "warning",
-          message: "Full GitHub sync failed, so the dashboard is using public repository fallback data. Re-authorize GitHub to fetch PRs, reviews, heatmap activity, and private repo files.",
+          kind: "error",
+          message: `Full GitHub sync failed: ${message || "Unknown error"}`,
         });
       });
-  }, [user, hasInsights, queryClient, isLoading]);
+  }, [user, hasFullGithubMetrics, queryClient, isLoading]);
 
-  // Heatmap geometry constants — must match the JSX cell size + gap
+  // Heatmap geometry constants must match the JSX cell size and gap.
   const CELL_PX = 11;  // h-[11px] w-[11px]
   const GAP_PX = 4;   // gap-[4px]
   const CELL_STEP = CELL_PX + GAP_PX; // 15px per column
@@ -215,51 +208,33 @@ const Dashboard = () => {
       const token = user ? getStoredGithubToken() : null;
       let sync: { repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles?: number };
 
-      if (user && (token || hasGithubFallbackToken)) {
-        // Tier 1: Try full sync with stored OAuth token or Vercel env token.
-        console.log(`[Dashboard] Tier 1: attempting sync with ${token ? "stored token" : "env token"}...`);
+      if (user && (token || hasConfiguredGithubToken)) {
+        console.log(`[Dashboard] attempting sync with ${token ? "stored token" : "configured token"}...`);
         try {
           sync = await syncGithubInsightsWithToken({ user, accessToken: token ?? "" });
-          console.log("[Dashboard] Tier 1 succeeded:", sync);
+          console.log("[Dashboard] token sync succeeded:", sync);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.warn("[Dashboard] Tier 1 failed:", msg);
+          console.warn("[Dashboard] token sync failed:", msg);
 
-          // If token is expired/invalid, clear it and fall through to popup
           if (msg.includes("401") || msg.includes("403") || msg.includes("token")) {
             clearStoredGithubToken();
-            console.log("[Dashboard] Token expired — clearing and opening popup for re-auth...");
+            console.log("[Dashboard] token expired; clearing and opening popup for re-auth...");
           }
 
-          // Tier 2: Re-authorize via popup
-          console.log("[Dashboard] Tier 2: opening GitHub OAuth popup...");
+          console.log("[Dashboard] opening GitHub OAuth popup...");
           try {
             const result = await refreshGithubInsights();
             sync = result;
-            console.log("[Dashboard] Tier 2 succeeded:", sync);
+            console.log("[Dashboard] popup sync succeeded:", sync);
           } catch (err2) {
             const msg2 = err2 instanceof Error ? err2.message : String(err2);
-            console.warn("[Dashboard] Tier 2 failed:", msg2);
-
-            // Tier 3: Profile-only fallback with the stored token (or whatever we have)
-            const freshToken = getStoredGithubToken();
-            if (freshToken && user) {
-              console.log("[Dashboard] Tier 3: profile fallback...");
-              const fallback = await syncGithubProfileFallback({ user, accessToken: freshToken });
-              sync = { repoCount: fallback.repoCount, privateRepoCount: 0, publicRepoCount: fallback.repoCount };
-              console.log("[Dashboard] Tier 3 fallback done:", sync);
-              toast({
-                title: "Partial sync completed",
-                description: `Loaded basic profile. ${fallback.repoCount} repositories found. Re-authorize for full insights.`,
-              });
-            } else {
-              throw new Error(msg2); // No recourse
-            }
+            console.warn("[Dashboard] popup sync failed:", msg2);
+            throw new Error(`Full GitHub sync failed: ${msg2}`);
           }
         }
       } else {
-        // No stored token — open popup directly
-        console.log("[Dashboard] No stored token — opening GitHub OAuth popup...");
+        console.log("[Dashboard] no stored token; opening GitHub OAuth popup...");
         const result = await refreshGithubInsights();
         sync = result;
         console.log("[Dashboard] Popup sync succeeded:", sync);
@@ -271,7 +246,7 @@ const Dashboard = () => {
       await refetch();
 
       toast({
-        title: "Insights refreshed ✓",
+        title: "Insights refreshed",
         description: `${sync.repoCount} repositories synced (${sync.privateRepoCount ?? 0} private, ${sync.publicRepoCount ?? 0} public).`,
       });
       setSyncNotice({
@@ -304,7 +279,7 @@ const Dashboard = () => {
     }
   };
 
-  // ✅ Conditional return AFTER all hooks
+  // Conditional return after all hooks.
   if (!user) {
     return (
       <div className="app-bg min-h-screen text-white pb-10">
@@ -343,7 +318,7 @@ const Dashboard = () => {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    Syncing…
+                    Syncing...
                   </>
                 ) : (
                   "Refresh insights"
@@ -354,13 +329,13 @@ const Dashboard = () => {
 
           {!hasInsights && !isLoading && (
             <div className="mb-5 rounded-2xl border border-white/15 bg-[#0c172f] px-4 py-3 text-sm text-white/75">
-              We could not find synced GitHub insights yet. Click <b>Refresh insights</b> to re-authorize and sync your full GitHub data.
+              We could not find a complete GitHub sync yet. Click <b>Refresh insights</b> to sync metrics and repository files.
             </div>
           )}
 
           {isLoading && (
             <div className="mb-5 rounded-2xl border border-white/10 bg-[#0c172f] px-4 py-3 text-sm text-white/55 animate-pulse">
-              Loading your GitHub insights…
+              Loading your GitHub insights...
             </div>
           )}
 
@@ -370,18 +345,10 @@ const Dashboard = () => {
                 "mb-5 rounded-2xl border px-4 py-3 text-sm",
                 syncNotice.kind === "success"
                   ? "border-emerald-400/25 bg-emerald-950/30 text-emerald-100"
-                  : syncNotice.kind === "warning"
-                    ? "border-amber-400/25 bg-amber-950/30 text-amber-100"
-                    : "border-red-400/25 bg-red-950/30 text-red-100",
+                  : "border-red-400/25 bg-red-950/30 text-red-100",
               ].join(" ")}
             >
               {syncNotice.message}
-            </div>
-          )}
-
-          {isPartialDashboard && !syncNotice && (
-            <div className="mb-5 rounded-2xl border border-amber-400/25 bg-amber-950/25 px-4 py-3 text-sm text-amber-100">
-              Public repositories loaded, but full GitHub metrics are not synced yet. Click <b>Refresh insights</b> to authorize GitHub and fetch PRs, reviews, contribution heatmap data, private repositories, and full file trees.
             </div>
           )}
 
@@ -430,7 +397,7 @@ const Dashboard = () => {
             <section className="app-panel rounded-2xl p-6 lg:col-span-5">
               <h3 className="text-lg font-semibold">Collaboration Impact</h3>
               {collaborationTotal === 0 && (
-                <p className="mt-1 text-xs text-amber-200/75">PR/review metrics need full GitHub authorization.</p>
+                <p className="mt-1 text-xs text-amber-200/75">Refresh insights to sync PRs, reviews, and closed issues.</p>
               )}
               <div className="mt-4 h-40">
                 {collaborationTotal > 0 ? (
@@ -470,7 +437,7 @@ const Dashboard = () => {
               <div className="mt-4 overflow-x-auto pb-2">
                 <div className="rounded-xl border border-white/10 bg-[#0a1324] p-3 w-max">
 
-                  {/* Month label row — absolutely positioned over the column grid */}
+                  {/* Month label row positioned over the column grid. */}
                   <div className="relative h-4 mb-1" style={{ width: Math.max((data?.heatmapWeeks?.length ?? 52), 52) * CELL_STEP - GAP_PX }}>
                     {monthLabels.map((m) => (
                       <span
@@ -510,7 +477,7 @@ const Dashboard = () => {
                 </div>
                 {!hasHeatmapMetrics && (
                   <p className="mt-3 text-sm text-white/45">
-                    Contribution heatmap needs full GitHub sync.
+                    Refresh insights to sync the contribution heatmap.
                   </p>
                 )}
               </div>
@@ -713,7 +680,7 @@ const Dashboard = () => {
 
                     {repos.length === 0 && (
                       <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#141418] px-3 py-3 text-sm text-white/60">
-                        {isLoading ? "Loading repositories…" : "No repositories available yet. Click Refresh insights."}
+                        {isLoading ? "Loading repositories..." : "No repositories available yet. Click Refresh insights."}
                       </p>
                     )}
                   </div>
