@@ -300,6 +300,9 @@ const asNumberMatrix = (value: unknown): number[][] => {
 };
 
 type RepoPreview = DashboardData["repos"][number];
+type RepoFetchDetail = {
+  default_branch?: string;
+};
 type GitHubPublicRepo = {
   full_name: string;
   html_url: string;
@@ -383,12 +386,13 @@ const normalizeRepo = (value: unknown): RepoPreview | null => {
   };
 };
 
-const fetchPublicRepoFiles = async (fullName: string, defaultBranch: string): Promise<string[]> => {
+const fetchPublicRepoFiles = async (fullName: string, defaultBranch?: string): Promise<string[]> => {
   try {
     const [owner, repo] = fullName.split("/");
     if (!owner || !repo) return [];
+    const refParam = defaultBranch ? `?ref=${encodeURIComponent(defaultBranch)}` : "";
     const response = await fetch(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(defaultBranch)}`
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents${refParam}`
     );
     if (!response.ok) return [];
     const payload = (await response.json()) as unknown;
@@ -402,6 +406,34 @@ const fetchPublicRepoFiles = async (fullName: string, defaultBranch: string): Pr
   } catch {
     return [];
   }
+};
+
+const fetchRepoDefaultBranch = async (fullName: string): Promise<string | undefined> => {
+  try {
+    const [owner, repo] = fullName.split("/");
+    if (!owner || !repo) return undefined;
+    const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`);
+    if (!response.ok) return undefined;
+    const payload = (await response.json()) as RepoFetchDetail;
+    return typeof payload.default_branch === "string" ? payload.default_branch : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const enrichRepoFilePreviews = async (repos: RepoPreview[]): Promise<RepoPreview[]> => {
+  const fileLists = await Promise.all(
+    repos.map(async (repo, index) => {
+      if (repo.files.length || repo.isPrivate || index >= 8) return repo.files;
+      const branch = await fetchRepoDefaultBranch(repo.name);
+      return fetchPublicRepoFiles(repo.name, branch);
+    })
+  );
+
+  return repos.map((repo, index) => ({
+    ...repo,
+    files: fileLists[index] ?? repo.files,
+  }));
 };
 
 const fetchPublicRepoFallback = async (uid: string): Promise<RepoPreview[]> => {
@@ -519,7 +551,9 @@ export const getDashboardData = async (uid: string): Promise<DashboardData> => {
       .map(normalizeRepo)
       .filter((repo): repo is RepoPreview => !!repo);
 
-    const repos = normalizedRepos.length ? normalizedRepos : await fetchPublicRepoFallback(uid);
+    const repos = await enrichRepoFilePreviews(
+      normalizedRepos.length ? normalizedRepos : await fetchPublicRepoFallback(uid)
+    );
 
     return {
       heading: remote.heading ?? EMPTY_DASHBOARD.heading,

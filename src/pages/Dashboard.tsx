@@ -18,6 +18,7 @@ const Dashboard = () => {
   const queryClient = useQueryClient();
   const [selectedRepo, setSelectedRepo] = useState<string>("");
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<{ kind: "success" | "warning" | "error"; message: string } | null>(null);
   const autoSyncRef = useRef(false);
 
   const { data, refetch, isLoading } = useQuery({
@@ -45,6 +46,12 @@ const Dashboard = () => {
   const languages = data?.languages ?? [];
   const languageSet = new Set(languages.map((lang) => lang.name.toLowerCase()));
   const collaboration = data?.collaboration ?? { prsMerged: 0, codeReviews: 0, issuesClosed: 0 };
+  const collaborationTotal = collaboration.prsMerged + collaboration.codeReviews + collaboration.issuesClosed;
+  const hasFilePreviews = repos.some((repo) => repo.files.length > 0);
+  const hasConsistencyMetrics = bars.length > 0 && (data?.consistencyScore ?? 0) > 0;
+  const hasHeatmapMetrics = (data?.heatmapWeeks?.length ?? 0) > 0;
+  const hasFullGithubMetrics = hasConsistencyMetrics || hasHeatmapMetrics || collaborationTotal > 0;
+  const isPartialDashboard = repos.length > 0 && !hasFullGithubMetrics;
   const topRoles = [...jobRecommendations]
     .sort((a, b) => b.match - a.match)
     .slice(0, 3)
@@ -126,6 +133,10 @@ const Dashboard = () => {
           title: "GitHub insights synced",
           description: `${sync.repoCount} repositories analyzed.`,
         });
+        setSyncNotice({
+          kind: "success",
+          message: `${sync.repoCount} repositories analyzed with full GitHub insight sync.`,
+        });
       })
       .catch(async (error) => {
         const token2 = getStoredGithubToken();
@@ -142,6 +153,10 @@ const Dashboard = () => {
         toast({
           title: "GitHub sync failed",
           description: "Loaded basic profile data. Re-authorize GitHub to sync full insights.",
+        });
+        setSyncNotice({
+          kind: "warning",
+          message: "Full GitHub sync failed, so the dashboard is using public repository fallback data. Re-authorize GitHub to fetch PRs, reviews, heatmap activity, and private repo files.",
         });
       });
   }, [user, hasInsights, queryClient, isLoading]);
@@ -192,6 +207,7 @@ const Dashboard = () => {
   const handleResync = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
+    setSyncNotice(null);
     console.log("[Dashboard] handleResync: starting...");
 
     try {
@@ -257,9 +273,22 @@ const Dashboard = () => {
         title: "Insights refreshed ✓",
         description: `${sync.repoCount} repositories synced (${sync.privateRepoCount ?? 0} private, ${sync.publicRepoCount ?? 0} public).`,
       });
+      setSyncNotice({
+        kind: "success",
+        message: `${sync.repoCount} repositories synced. ${sync.reposWithFiles ?? 0} repositories include file previews.`,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Dashboard] handleResync failed:", message);
+      setSyncNotice({
+        kind: "error",
+        message:
+          message.toLowerCase().includes("popup") || message.toLowerCase().includes("closed")
+            ? "GitHub authorization popup was blocked or closed. Allow popups for this site, then click Refresh insights again."
+            : message.includes("401") || message.includes("403")
+              ? "GitHub authorization expired. Click Refresh insights to re-authorize your GitHub account."
+              : `Refresh failed: ${message}`,
+      });
 
       if (message.toLowerCase().includes("popup") || message.toLowerCase().includes("closed")) {
         toast({ title: "Popup blocked or closed", description: "Allow popups for this site and try again." });
@@ -334,6 +363,27 @@ const Dashboard = () => {
             </div>
           )}
 
+          {syncNotice && (
+            <div
+              className={[
+                "mb-5 rounded-2xl border px-4 py-3 text-sm",
+                syncNotice.kind === "success"
+                  ? "border-emerald-400/25 bg-emerald-950/30 text-emerald-100"
+                  : syncNotice.kind === "warning"
+                    ? "border-amber-400/25 bg-amber-950/30 text-amber-100"
+                    : "border-red-400/25 bg-red-950/30 text-red-100",
+              ].join(" ")}
+            >
+              {syncNotice.message}
+            </div>
+          )}
+
+          {isPartialDashboard && !syncNotice && (
+            <div className="mb-5 rounded-2xl border border-amber-400/25 bg-amber-950/25 px-4 py-3 text-sm text-amber-100">
+              Public repositories loaded, but full GitHub metrics are not synced yet. Click <b>Refresh insights</b> to authorize GitHub and fetch PRs, reviews, contribution heatmap data, private repositories, and full file trees.
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             <section className="app-panel rounded-2xl p-6 lg:col-span-3">
               <div className="mx-auto h-28 w-28 rounded-full border-[10px] border-[#ff7a00] flex items-center justify-center text-center">
@@ -355,36 +405,51 @@ const Dashboard = () => {
                 <p className="text-3xl font-bold">{data?.consistencyScore ?? 0}<span className="text-base text-white/55">/10</span></p>
               </div>
               <div className="mt-4 h-32">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={consistencyChartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1c2740" />
-                    <XAxis dataKey="name" hide />
-                    <YAxis hide />
-                    <Tooltip
-                      cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                      contentStyle={{ background: "#0d172b", border: "1px solid #31486f", borderRadius: "10px", color: "#fff" }}
-                    />
-                    <Bar dataKey="value" fill="#ff7a00" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {hasConsistencyMetrics ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={consistencyChartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1c2740" />
+                      <XAxis dataKey="name" hide />
+                      <YAxis hide />
+                      <Tooltip
+                        cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                        contentStyle={{ background: "#0d172b", border: "1px solid #31486f", borderRadius: "10px", color: "#fff" }}
+                      />
+                      <Bar dataKey="value" fill="#ff7a00" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/15 px-4 text-center text-sm text-white/45">
+                    Sync GitHub to calculate commit consistency.
+                  </div>
+                )}
               </div>
             </section>
 
             <section className="app-panel rounded-2xl p-6 lg:col-span-5">
               <h3 className="text-lg font-semibold">Collaboration Impact</h3>
+              {collaborationTotal === 0 && (
+                <p className="mt-1 text-xs text-amber-200/75">PR/review metrics need full GitHub authorization.</p>
+              )}
               <div className="mt-4 h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart layout="vertical" data={collaborationChartData} margin={{ left: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1c2740" />
-                    <XAxis type="number" hide />
-                    <YAxis type="category" dataKey="metric" tick={{ fill: "#9fb0cc", fontSize: 12 }} width={72} />
-                    <Tooltip
-                      cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                      contentStyle={{ background: "#0d172b", border: "1px solid #31486f", borderRadius: "10px", color: "#fff" }}
-                    />
-                    <Bar dataKey="value" fill="#ff7a00" radius={[0, 6, 6, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {collaborationTotal > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart layout="vertical" data={collaborationChartData} margin={{ left: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1c2740" />
+                      <XAxis type="number" hide />
+                      <YAxis type="category" dataKey="metric" tick={{ fill: "#9fb0cc", fontSize: 12 }} width={72} />
+                      <Tooltip
+                        cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                        contentStyle={{ background: "#0d172b", border: "1px solid #31486f", borderRadius: "10px", color: "#fff" }}
+                      />
+                      <Bar dataKey="value" fill="#ff7a00" radius={[0, 6, 6, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/15 px-4 text-center text-sm text-white/45">
+                    Sync GitHub to fetch merged PRs, reviews, and closed issues.
+                  </div>
+                )}
               </div>
             </section>
 
@@ -419,7 +484,7 @@ const Dashboard = () => {
 
                   {/* Week columns */}
                   <div className="flex gap-[4px]">
-                    {(data?.heatmapWeeks?.length
+                    {(hasHeatmapMetrics
                       ? data.heatmapWeeks
                       : Array.from({ length: 52 }, () => Array.from({ length: 7 }, () => 0))
                     ).map((week, wi) => (
@@ -429,7 +494,7 @@ const Dashboard = () => {
                             key={di}
                             className={[
                               "h-[11px] w-[11px] rounded-[2px] outline outline-1 outline-white/5",
-                              data?.heatmapWeeks?.length
+                              hasHeatmapMetrics
                                 ? `heatmap-${level}`
                                 : isLoading
                                   ? "bg-white/5 animate-pulse"
@@ -442,6 +507,11 @@ const Dashboard = () => {
                   </div>
 
                 </div>
+                {!hasHeatmapMetrics && (
+                  <p className="mt-3 text-sm text-white/45">
+                    Contribution heatmap needs full GitHub sync.
+                  </p>
+                )}
               </div>
             </section>
 
@@ -686,7 +756,9 @@ const Dashboard = () => {
                       {selectedRepoData &&
                         selectedRepoData.files.length === 0 && (
                           <p className="rounded-xl border border-dashed border-[#2a2a2a] bg-[#1a1a1f] px-3 py-2 text-white/60">
-                            No file preview available yet. Click Refresh insights to fetch files.
+                            {selectedRepoData.isPrivate
+                              ? "This is a private repository. Click Refresh insights and re-authorize GitHub with repo access to fetch its file tree."
+                              : "GitHub did not return a public file tree for this repository yet. Click Refresh insights to retry a full sync."}
                           </p>
                         )}
 
