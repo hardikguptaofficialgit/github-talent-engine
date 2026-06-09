@@ -145,6 +145,8 @@ const FEATURED_JOBS: JobItem[] = [
 ];
 
 const DEMO_UID = "demo-user";
+const DEMO_APPLICATIONS_KEY = "opensourcehire.demo.applications";
+const DEMO_PROFILE_KEY = "opensourcehire.demo.profile";
 
 const DEMO_DASHBOARD: DashboardData = {
   heading: "Welcome back, Hardik",
@@ -259,6 +261,26 @@ const DEMO_APPLICATIONS: ApplicationItem[] = [
     applicantEmail: "hardik@konvergehack.in",
   },
 ];
+
+const readDemoJson = <T,>(key: string, fallback: T): T => {
+  if (typeof window === "undefined") return fallback;
+
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? (JSON.parse(value) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeDemoJson = <T,>(key: string, value: T): void => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(value));
+};
+
+const getDemoApplications = (): ApplicationItem[] => readDemoJson(DEMO_APPLICATIONS_KEY, DEMO_APPLICATIONS);
+
+const getDemoProfile = (): ProfileData => readDemoJson(DEMO_PROFILE_KEY, DEMO_PROFILE);
 
 const asStringArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
@@ -572,7 +594,7 @@ export const getRecommendedJobsForUser = async (uid: string): Promise<JobItem[]>
 };
 
 export const getApplicationsData = async (uid: string): Promise<ApplicationItem[]> => {
-  if (uid === DEMO_UID) return DEMO_APPLICATIONS;
+  if (uid === DEMO_UID) return getDemoApplications();
   if (!hasFirebaseConfig || !db || !uid) return [];
 
   try {
@@ -587,6 +609,35 @@ export const getApplicationsData = async (uid: string): Promise<ApplicationItem[
 };
 
 export const saveApplication = async (uid: string, job: JobItem, status: ApplicationStatus, payload?: ApplyPayload): Promise<void> => {
+  if (uid === DEMO_UID) {
+    const applications = getDemoApplications();
+    const existing = applications.find((application) => application.jobId === job.id);
+    const nextApplication: ApplicationItem = {
+      id: existing?.id ?? `demo-${job.id}`,
+      jobId: job.id,
+      status,
+      company: job.company,
+      role: job.role,
+      location: job.location,
+      match: job.match,
+      tags: job.tags,
+      foot: buildFoot(status),
+      applicantName: payload?.applicantName ?? existing?.applicantName ?? "",
+      applicantEmail: payload?.applicantEmail ?? existing?.applicantEmail ?? "",
+      portfolioUrl: payload?.portfolioUrl ?? existing?.portfolioUrl ?? "",
+      resumeUrl: payload?.resumeUrl ?? existing?.resumeUrl ?? "",
+      note: payload?.note ?? existing?.note ?? "",
+    };
+
+    writeDemoJson(
+      DEMO_APPLICATIONS_KEY,
+      existing
+        ? applications.map((application) => (application.jobId === job.id ? nextApplication : application))
+        : [nextApplication, ...applications],
+    );
+    return;
+  }
+
   if (!hasFirebaseConfig || !db || !uid) return;
 
   const ref = doc(db, "users", uid, "applications", job.id);
@@ -616,6 +667,16 @@ export const saveApplication = async (uid: string, job: JobItem, status: Applica
 };
 
 export const updateApplicationStatus = async (uid: string, applicationId: string, status: ApplicationStatus): Promise<void> => {
+  if (uid === DEMO_UID) {
+    writeDemoJson(
+      DEMO_APPLICATIONS_KEY,
+      getDemoApplications().map((application) =>
+        application.id === applicationId ? { ...application, status, foot: buildFoot(status) } : application,
+      ),
+    );
+    return;
+  }
+
   if (!hasFirebaseConfig || !db || !uid || !applicationId) return;
 
   await updateDoc(doc(db, "users", uid, "applications", applicationId), {
@@ -626,7 +687,7 @@ export const updateApplicationStatus = async (uid: string, applicationId: string
 };
 
 export const getProfileData = async (uid: string): Promise<ProfileData | null> => {
-  if (uid === DEMO_UID) return DEMO_PROFILE;
+  if (uid === DEMO_UID) return getDemoProfile();
   if (!hasFirebaseConfig || !db || !uid) return null;
 
   try {
@@ -651,6 +712,23 @@ export const getProfileData = async (uid: string): Promise<ProfileData | null> =
 };
 
 export const updateProfileData = async (uid: string, payload: ProfileData): Promise<void> => {
+  if (uid === DEMO_UID) {
+    writeDemoJson(DEMO_PROFILE_KEY, {
+      name: payload.name.trim(),
+      headline: payload.headline.trim(),
+      bio: payload.bio.trim(),
+      links: (payload.links ?? [])
+        .filter((link) => typeof link.label === "string" && typeof link.url === "string")
+        .map((link) => ({
+          label: link.label.trim(),
+          url: link.url.trim(),
+        }))
+        .filter((link) => link.label.length > 0 || link.url.length > 0)
+        .slice(0, 6),
+    });
+    return;
+  }
+
   if (!hasFirebaseConfig || !db || !uid) return;
 
   const sanitizedLinks = (payload.links ?? [])

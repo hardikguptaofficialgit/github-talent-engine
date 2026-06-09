@@ -24,6 +24,25 @@ const skillMappingDemo = [
   { skill: "AI/ML", score: 66 },
 ];
 
+const demoHeatmapWeeks = Array.from({ length: 52 }, (_, weekIdx) =>
+  Array.from({ length: 7 }, (_, dayIdx) => {
+    const value = (weekIdx * 7 + dayIdx * 11 + 13) % 19;
+    if (value < 5) return 0;
+    if (value < 9) return 1;
+    if (value < 13) return 2;
+    if (value < 17) return 3;
+    return 4;
+  }),
+);
+
+const heatmapColors = [
+  "bg-[#0f0f12]",
+  "bg-[#2a2a2e]",
+  "bg-[#44444a]",
+  "bg-[#6b6b73]",
+  "bg-[#e5e5e5]",
+];
+
 const Index = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -126,27 +145,13 @@ const Index = () => {
               {/* Heatmap Grid */}
            <div className="overflow-x-auto pb-3 custom-scrollbar">
   <div className="flex gap-[4px] min-w-max pt-2">
-    {Array.from({ length: 52 }).map((_, weekIdx) => (
+    {demoHeatmapWeeks.map((week, weekIdx) => (
       <div key={weekIdx} className="flex flex-col gap-[4px]">
-        {Array.from({ length: 7 }).map((_, dayIdx) => {
-          const isActive = Math.random() > 0.35;
-          const intensity = isActive
-            ? Math.floor(Math.random() * 4) + 1
-            : 0;
-
-          // Black → White grayscale scale
-          const colors = [
-            "bg-[#0f0f12]", // 0 - no activity
-            "bg-[#2a2a2e]", // 1 - low
-            "bg-[#44444a]", // 2 - medium
-            "bg-[#6b6b73]", // 3 - high
-            "bg-[#e5e5e5]", // 4 - max
-          ];
-
+        {week.map((intensity, dayIdx) => {
           return (
             <div
               key={dayIdx}
-              className={`w-[12px] h-[12px] rounded-[3px] ${colors[intensity]} border border-white/5 transition-all duration-200 hover:scale-110`}
+              className={`w-[12px] h-[12px] rounded-[3px] ${heatmapColors[intensity]} border border-white/5 transition-all duration-200 hover:scale-110`}
             />
           );
         })}

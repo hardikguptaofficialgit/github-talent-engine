@@ -1,4 +1,4 @@
-import { ReactNode, createContext, useEffect, useMemo, useState } from "react";
+import { ReactNode, createContext, useCallback, useEffect, useMemo, useState } from "react";
 import { User } from "firebase/auth";
 import { loginWithGithub, logout, subscribeAuth } from "@/lib/firebase";
 
@@ -46,7 +46,7 @@ const AuthProvider = ({ children }: { children: ReactNode }) => {
     return unsub;
   }, [demoMode]);
 
-  const loginDemo = async (): Promise<User | null> => {
+  const loginDemo = useCallback(async (): Promise<User | null> => {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(DEMO_MODE_KEY, "1");
     }
@@ -55,9 +55,9 @@ const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(demoUser);
     setLoading(false);
     return demoUser;
-  };
+  }, []);
 
-  const signOutUser = async (): Promise<void> => {
+  const signOutUser = useCallback(async (): Promise<void> => {
     if (demoMode) {
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(DEMO_MODE_KEY);
@@ -67,7 +67,7 @@ const AuthProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
     await logout();
-  };
+  }, [demoMode]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -77,7 +77,7 @@ const AuthProvider = ({ children }: { children: ReactNode }) => {
       loginDemo,
       signOutUser,
     }),
-    [user, loading]
+    [user, loading, loginDemo, signOutUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
