@@ -295,8 +295,18 @@ const asNumberArray = (value: unknown): number[] => {
 const asNumberMatrix = (value: unknown): number[][] => {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((row): row is unknown[] => Array.isArray(row))
-    .map((row) => row.filter((item): item is number => typeof item === "number"));
+    .map((row) => {
+      if (Array.isArray(row)) {
+        return row.filter((item): item is number => typeof item === "number");
+      }
+      if (row && typeof row === "object" && Array.isArray((row as Record<string, unknown>).days)) {
+        return ((row as Record<string, unknown>).days as unknown[]).filter(
+          (item): item is number => typeof item === "number"
+        );
+      }
+      return [];
+    })
+    .filter((row) => row.length > 0);
 };
 
 type RepoPreview = DashboardData["repos"][number];

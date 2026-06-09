@@ -50,8 +50,15 @@ const Navbar = () => {
       if (!loggedInUser) {
         toast({ title: "Sign-in unavailable", description: "Check configuration." });
       }
-    } catch {
-      toast({ title: "Sign-in failed", description: "Grant GitHub permissions." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast({
+        title: "Sign-in failed",
+        description:
+          message.toLowerCase().includes("popup") || message.toLowerCase().includes("closed")
+            ? "Allow the GitHub popup and try again."
+            : "GitHub authorization failed. Check Firebase OAuth settings and try again.",
+      });
     }
   };
 

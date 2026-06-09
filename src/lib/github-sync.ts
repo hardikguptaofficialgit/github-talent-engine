@@ -376,7 +376,7 @@ export const syncGithubInsights = async ({
         contributionStrength,
         consistencyScore,
         consistencyBars: bars,
-        heatmapWeeks,
+        heatmapWeeks: heatmapWeeks.map((days, index) => ({ index, days })),
         collaboration: {
           prsMerged: prsMergedCount,
           codeReviews: codeReviewsCount,

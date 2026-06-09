@@ -69,19 +69,8 @@ const loginWithGithub = async (): Promise<User | null> => {
   const credential = GithubAuthProvider.credentialFromResult(result);
   const accessToken = credential?.accessToken;
 
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
   if (accessToken) {
     storeGithubToken(accessToken);
-    await syncGithubInsights({
-      firestore: db,
-      uid: result.user.uid,
-      accessToken,
-      displayName: result.user.displayName,
-      email: result.user.email,
-    });
   }
 
   return result.user;
