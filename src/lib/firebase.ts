@@ -15,6 +15,7 @@ import { syncGithubInsights } from "@/lib/github-sync";
 const GITHUB_TOKEN_KEY = "opensourcehire.github.token";
 const GITHUB_TOKEN_TS_KEY = "opensourcehire.github.token.ts";
 const ENV_GITHUB_TOKEN: string = import.meta.env.VITE_GITHUB_TOKEN ?? "";
+const hasGithubFallbackToken = Boolean(ENV_GITHUB_TOKEN);
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -99,15 +100,13 @@ const syncGithubInsightsWithToken = async ({
   accessToken: string;
 }): Promise<{ repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles: number }> => {
   if (!db) {
-    console.warn("[firebase] Firestore not available — skipping sync.");
-    return { repoCount: 0, privateRepoCount: 0, publicRepoCount: 0, reposWithFiles: 0 };
+    throw new Error("Firestore is not configured. Add Firebase environment variables and redeploy.");
   }
 
-  // Use env token as ultimate fallback so sync never completely fails
+  // Use env token as fallback when the user has not authorized GitHub in-browser.
   const effectiveToken = accessToken || ENV_GITHUB_TOKEN;
   if (!effectiveToken) {
-    console.warn("[firebase] No GitHub token available (user token empty, no env fallback).");
-    return { repoCount: 0, privateRepoCount: 0, publicRepoCount: 0, reposWithFiles: 0 };
+    throw new Error("No GitHub token available. Add VITE_GITHUB_TOKEN in Vercel or re-authorize GitHub.");
   }
 
   console.log(`[firebase] syncGithubInsightsWithToken: uid=${user.uid}, token=${accessToken ? "user OAuth" : "env fallback"}`);
@@ -155,8 +154,9 @@ const refreshGithubInsights = async (): Promise<{
     });
   } catch (err) {
     console.warn("[firebase] Full sync failed after popup, using profile fallback:", err);
-    const fallback = await syncGithubProfileFallback({ user: result.user, accessToken });
-    sync = { repoCount: fallback.repoCount, privateRepoCount: 0, publicRepoCount: fallback.repoCount, reposWithFiles: 0 };
+    await syncGithubProfileFallback({ user: result.user, accessToken });
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Full GitHub sync failed after authorization: ${message}`);
   }
 
   return { user: result.user, ...sync };
@@ -328,6 +328,7 @@ export {
   auth,
   db,
   hasFirebaseConfig,
+  hasGithubFallbackToken,
   loginWithGithub,
   refreshGithubInsights,
   syncGithubInsightsWithToken,

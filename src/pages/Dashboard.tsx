@@ -10,6 +10,7 @@ import {
   syncGithubInsightsWithToken,
   syncGithubProfileFallback,
   clearStoredGithubToken,
+  hasGithubFallbackToken,
 } from "@/lib/firebase";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -121,10 +122,10 @@ const Dashboard = () => {
   useEffect(() => {
     if (!user || autoSyncRef.current || hasInsights || isLoading) return;
     const token = getStoredGithubToken();
-    if (!token) return;
+    if (!token && !hasGithubFallbackToken) return;
 
     autoSyncRef.current = true;
-    syncGithubInsightsWithToken({ user, accessToken: token })
+    syncGithubInsightsWithToken({ user, accessToken: token ?? "" })
       .then((sync) => {
         if (user?.uid) {
           queryClient.invalidateQueries({ queryKey: ["dashboard-data", user.uid] });
@@ -214,11 +215,11 @@ const Dashboard = () => {
       const token = user ? getStoredGithubToken() : null;
       let sync: { repoCount: number; privateRepoCount: number; publicRepoCount: number; reposWithFiles?: number };
 
-      if (token && user) {
-        // Tier 1: Try full sync with stored token
-        console.log("[Dashboard] Tier 1: attempting sync with stored token...");
+      if (user && (token || hasGithubFallbackToken)) {
+        // Tier 1: Try full sync with stored OAuth token or Vercel env token.
+        console.log(`[Dashboard] Tier 1: attempting sync with ${token ? "stored token" : "env token"}...`);
         try {
-          sync = await syncGithubInsightsWithToken({ user, accessToken: token });
+          sync = await syncGithubInsightsWithToken({ user, accessToken: token ?? "" });
           console.log("[Dashboard] Tier 1 succeeded:", sync);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
